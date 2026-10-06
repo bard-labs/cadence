@@ -48,7 +48,7 @@ export function PlayerBar() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 24, opacity: 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 36 }}
-            className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 border-t border-white/8 bg-background/70 backdrop-blur-xl sm:bottom-0 sm:pb-[env(safe-area-inset-bottom)]"
+            className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 border-t border-border/60 bg-background/90 backdrop-blur-xl sm:bottom-0 sm:pb-[env(safe-area-inset-bottom)]"
           >
             {fx.visual !== "off" && (
               <div className="pointer-events-none absolute inset-x-0 -top-10 h-10 opacity-70">

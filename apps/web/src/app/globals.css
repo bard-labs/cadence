@@ -35,35 +35,29 @@
   --radius-3xl: calc(var(--radius) * 2.2);
 }
 
-/*
-  Cadence is dark-only. The palette leans Harman Kardon Aura Studio:
-  glossy near-black, soft magenta / violet ambient rings, cool cyan edge light.
-*/
+/* Cadence is dark-only. Tokens live on :root so there is no flash before hydration. */
 :root {
   color-scheme: dark;
-  --background: oklch(0.11 0.012 300);
-  --foreground: oklch(0.97 0.01 300);
-  --card: oklch(0.155 0.018 300);
-  --card-foreground: oklch(0.97 0.01 300);
-  --popover: oklch(0.16 0.02 300);
-  --popover-foreground: oklch(0.97 0.01 300);
-  --primary: oklch(0.96 0.01 300);
-  --primary-foreground: oklch(0.16 0.02 300);
-  --secondary: oklch(0.22 0.03 300);
-  --secondary-foreground: oklch(0.97 0.01 300);
-  --muted: oklch(0.2 0.025 300);
-  --muted-foreground: oklch(0.7 0.03 300);
-  --accent: oklch(0.24 0.04 320);
-  --accent-foreground: oklch(0.97 0.01 300);
+  --background: oklch(0.145 0.004 286);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.18 0.005 286);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.19 0.005 286);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.97 0 0);
+  --primary-foreground: oklch(0.18 0.005 286);
+  --secondary: oklch(0.24 0.006 286);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.22 0.006 286);
+  --muted-foreground: oklch(0.68 0.012 286);
+  --accent: oklch(0.24 0.006 286);
+  --accent-foreground: oklch(0.97 0 0);
   --destructive: oklch(0.68 0.19 22);
-  --border: oklch(0.75 0.04 320 / 14%);
-  --input: oklch(0.75 0.04 320 / 16%);
-  --ring: oklch(0.65 0.12 320);
-  --live: oklch(0.78 0.16 330);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.6 0.01 286);
+  --live: oklch(0.78 0.17 152);
   --radius: 0.75rem;
-  --aura-magenta: oklch(0.58 0.24 320);
-  --aura-violet: oklch(0.48 0.2 290);
-  --aura-cyan: oklch(0.72 0.12 220);
 }
 
 @layer base {
@@ -77,26 +71,10 @@
   body {
     @apply min-h-dvh bg-background text-foreground;
     font-feature-settings: "cv11", "ss01";
-    background-color: var(--background);
-    background-image:
-      radial-gradient(ellipse 80% 55% at 50% -10%, oklch(0.45 0.22 320 / 0.38), transparent 55%),
-      radial-gradient(ellipse 50% 40% at 85% 90%, oklch(0.5 0.14 220 / 0.18), transparent 50%),
-      radial-gradient(ellipse 45% 35% at 10% 85%, oklch(0.4 0.18 290 / 0.22), transparent 50%),
-      radial-gradient(circle at 50% 120%, oklch(0.35 0.16 320 / 0.2), transparent 45%);
-    background-attachment: fixed;
   }
   ::selection {
-    background: oklch(0.55 0.2 320 / 0.4);
+    @apply bg-white/20;
   }
-}
-
-/* Soft Aura-style under-glow used in DJ mode and hero surfaces. */
-@utility aura-glow {
-  background:
-    radial-gradient(ellipse 70% 50% at 50% 40%, oklch(0.55 0.26 320 / 0.45), transparent 60%),
-    radial-gradient(ellipse 55% 40% at 30% 70%, oklch(0.5 0.18 280 / 0.28), transparent 55%),
-    radial-gradient(ellipse 50% 35% at 75% 65%, oklch(0.65 0.14 220 / 0.22), transparent 50%),
-    radial-gradient(circle at 50% 100%, oklch(0.4 0.2 330 / 0.35), transparent 40%);
 }
 
 @utility scrollbar-none {

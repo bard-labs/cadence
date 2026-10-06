@@ -1,13 +1,12 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Pause, Play } from "lucide-react";
+import { Mic2, Pause, Play, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { SeekBar } from "@/components/ui/seek-bar";
 import { Vinyl } from "@/features/listen/vinyl";
 import { useLive } from "@/features/live/live-provider";
-import { DynamicIsland } from "@/features/player/dynamic-island";
 import { useFx } from "@/features/player/fx-store";
 import { LyricsView, useTrackLyrics } from "@/features/player/lyrics-view";
 import { usePlayer } from "@/features/player/player-store";
@@ -15,18 +14,21 @@ import { Visualizer } from "@/features/player/visualizer";
 import { coverUrl, userHue } from "@/lib/artwork";
 import { cn } from "@/lib/utils";
 
-/** Full-screen DJ mode. Lyrics overlay is toggled from the Dynamic Island. */
+/** Full-screen DJ mode. Lyrics overlay toggles with the Lyrics button. */
 export function ImmersivePlayer() {
   const open = useFx((s) => s.djOpen);
+  const setOpen = useFx((s) => s.setDjOpen);
   const visual = useFx((s) => s.visual);
   const lyricsOn = useFx((s) => s.djLyricsOverlay);
+  const setLyricsOn = useFx((s) => s.setDjLyricsOverlay);
   const { engine, me } = useLive();
   const p = usePlayer();
   const { lines } = useTrackLyrics();
   const showPause = p.status === "playing" || p.status === "buffering";
   const art = p.track?.coverUrl || (p.track ? coverUrl(p.track.id, 640) : null);
   const hue = userHue(me.id);
-  const showLyrics = lyricsOn && lines.length > 0;
+  const hasLyrics = lines.length > 0;
+  const showLyrics = lyricsOn && hasLyrics;
 
   return (
     <AnimatePresence>
@@ -39,24 +41,39 @@ export function ImmersivePlayer() {
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[60] flex flex-col bg-background"
         >
-          <DynamicIsland />
-
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <div className="aura-glow absolute inset-0 opacity-90" />
             {art && (
               // biome-ignore lint/performance/noImgElement: blurred backdrop from dynamic cover
-              <img src={art} alt="" className="size-full scale-125 object-cover opacity-20 blur-3xl" />
+              <img src={art} alt="" className="size-full scale-125 object-cover opacity-25 blur-3xl" />
             )}
             {visual !== "off" && (
-              <div className="absolute inset-0 opacity-70">
-                <Visualizer hue={300} />
+              <div className="absolute inset-0 opacity-80">
+                <Visualizer hue={hue} />
               </div>
             )}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/70" />
+            <div className="absolute inset-0 bg-gradient-to-b from-background/55 via-background/35 to-background/75" />
           </div>
 
-          <div className="relative z-10 flex shrink-0 items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pr-28 sm:px-8">
-            <p className="text-xs tracking-[0.2em] text-white/50 uppercase">DJ mode</p>
+          <div className="relative z-10 flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8">
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">DJ mode</p>
+            <div className="flex items-center gap-1">
+              <Button
+                variant={showLyrics ? "default" : "ghost"}
+                size="sm"
+                className="h-8 gap-1.5 px-2.5"
+                disabled={!hasLyrics}
+                onClick={() => setLyricsOn(!lyricsOn)}
+                aria-pressed={showLyrics}
+                aria-label={showLyrics ? "Hide lyrics overlay" : "Show lyrics overlay"}
+                title={hasLyrics ? "Lyrics overlay" : "No lyrics on this track"}
+              >
+                <Mic2 className="size-4" />
+                Lyrics
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Exit DJ mode">
+                <X />
+              </Button>
+            </div>
           </div>
 
           <div
@@ -107,11 +124,10 @@ export function ImmersivePlayer() {
               {showLyrics && (
                 <motion.div
                   key="lyrics"
-                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                  className="pointer-events-auto w-full max-w-lg rounded-3xl border border-white/10 bg-black/40 px-4 py-6 shadow-[0_0_60px_oklch(0.5_0.2_320_/0.25)] backdrop-blur-md md:max-h-[70dvh] md:overflow-y-auto"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  className="pointer-events-auto w-full max-w-lg rounded-3xl border border-white/10 bg-black/35 px-4 py-6 backdrop-blur-md md:max-h-[70dvh] md:overflow-y-auto"
                 >
                   <p className="mb-4 text-center text-[10px] tracking-[0.2em] text-white/45 uppercase">Lyrics</p>
                   <LyricsView overlay autoScroll={false} className="space-y-4" />

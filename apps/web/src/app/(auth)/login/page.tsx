@@ -10,9 +10,8 @@ export const metadata: Metadata = { title: "Sign in" };
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const { next } = await searchParams;
   return (
-    <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-5 py-12">
-      <div aria-hidden className="aura-glow pointer-events-none absolute inset-0 opacity-80" />
-      <div className="relative z-10 w-full max-w-sm space-y-8 rounded-3xl border border-white/10 bg-black/35 p-6 shadow-[0_0_80px_oklch(0.5_0.2_320_/0.2)] backdrop-blur-xl sm:p-8">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-5 py-12">
+      <div className="w-full max-w-sm space-y-8">
         <div className="flex flex-col items-center gap-5 text-center">
           <Logo />
           <div className="space-y-1.5">
