@@ -13,6 +13,7 @@ bin/
 .env
 .env.*
 !.env.example
+!**/.env.local.example
 apps/web/.env.local
 
 # OS
