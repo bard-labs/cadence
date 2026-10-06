@@ -36,7 +36,8 @@ export function LibraryView() {
     queryKey: queryKeys.tracks(page, q),
     queryFn: ({ signal }) => api.tracks({ page, pageSize: PAGE_SIZE, q }, signal),
     placeholderData: (prev) => prev,
-    refetchInterval: (query) => (query.state.data?.items.some((t) => t.status === "processing") ? 3000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.items?.some((t) => t.status === "processing") ? 3000 : false,
   });
 
   const data = tracks.data;
