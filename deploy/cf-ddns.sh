@@ -13,9 +13,20 @@ source "$ENV_FILE"
 : "${CF_RECORD_ID:?}"
 : "${CF_RECORD_NAME:?}"
 
-IP="$(curl -4 -fsS --max-time 15 https://api.ipify.org)"
+# Prefer services that work on Iranian networks; api.ipify.org often times out.
+IP=""
+for url in \
+  https://icanhazip.com \
+  https://checkip.amazonaws.com \
+  https://api.ipify.org
+do
+  if IP="$(curl -4 -fsS --max-time 10 "$url" | tr -d '[:space:]')"; then
+    [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+  fi
+  IP=""
+done
 if [[ ! "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "$(date -Is) bad ip response: $IP" >&2
+  echo "$(date -Is) could not detect public IPv4" >&2
   exit 1
 fi
 
