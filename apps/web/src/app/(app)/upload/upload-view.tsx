@@ -98,7 +98,9 @@ export function UploadView() {
         onProgress: (progress) => setPhase({ kind: "uploading", progress }),
       });
       setPhase({ kind: "registering" });
-      await api.createTrack(cleanTitle, target.objectKey);
+      // A title left as the file name may be replaced by the tag inside the file.
+      const titleAuto = cleanTitle === titleFromFilename(file.name);
+      await api.createTrack(cleanTitle, target.objectKey, titleAuto);
       await queryClient.invalidateQueries({ queryKey: queryKeys.tracks });
       setPhase({ kind: "done", title: cleanTitle });
       setFile(null);

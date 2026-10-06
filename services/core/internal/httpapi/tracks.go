@@ -14,6 +14,7 @@ import (
 func (a *API) withURL(t store.Track) store.Track {
 	if t.Status == "ready" {
 		t.ManifestURL = a.s3.PublicURL(t.ManifestKey)
+		t.CoverURL = a.s3.PublicURL(t.CoverKey)
 	}
 	return t
 }
@@ -31,6 +32,7 @@ func (a *API) createTrack(w http.ResponseWriter, r *http.Request) {
 	me := currentUser(r)
 	var body struct {
 		Title     string `json:"title"`
+		TitleAuto bool   `json:"titleAuto"`
 		ObjectKey string `json:"objectKey"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
@@ -61,7 +63,7 @@ func (a *API) createTrack(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, r, errBadRequest("upload_too_large", "That file is too large."))
 		return
 	}
-	id, err := a.store.CreateTrack(r.Context(), me.ID, title, body.ObjectKey, size)
+	id, err := a.store.CreateTrack(r.Context(), me.ID, title, body.TitleAuto, body.ObjectKey, size)
 	if err != nil {
 		a.writeError(w, r, err)
 		return

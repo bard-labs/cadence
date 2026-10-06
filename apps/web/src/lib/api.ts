@@ -48,6 +48,18 @@ export type Track = {
   durationMs: number | null;
   error: string | null;
   createdAt: string;
+  artist?: string | null;
+  album?: string | null;
+  year?: number | null;
+  genre?: string | null;
+  coverUrl?: string;
+  codec?: string | null;
+  sampleRate?: number | null;
+  channels?: number | null;
+  bitrate?: number | null;
+  hasLyrics?: boolean;
+  /** Present only on a single-track read. */
+  lyrics?: string | null;
 };
 
 export type UploadTarget = {
@@ -149,8 +161,8 @@ export const api = {
   tracks: (signal?: AbortSignal) => request<Track[]>("/v1/tracks", { signal }),
   track: (id: string, signal?: AbortSignal) => request<Track>(`/v1/tracks/${encodeURIComponent(id)}`, { signal }),
   createUpload: () => request<UploadTarget>("/v1/uploads", { method: "POST", body: {} }),
-  createTrack: (title: string, objectKey: string) =>
-    request<Track>("/v1/tracks", { method: "POST", body: { title, objectKey } }),
+  createTrack: (title: string, objectKey: string, titleAuto = false) =>
+    request<Track>("/v1/tracks", { method: "POST", body: { title, objectKey, titleAuto } }),
 };
 
 export const queryKeys = {

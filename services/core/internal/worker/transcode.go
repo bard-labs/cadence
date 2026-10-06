@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bardiamardan/bardlabs-cadence/services/core/internal/storage"
 	"github.com/bardiamardan/bardlabs-cadence/services/core/internal/store"
@@ -70,7 +71,7 @@ func (t *Transcoder) Run(ctx context.Context, job *store.Job) (trackID string, e
 		return trackID, fmt.Errorf("download original: %w", err)
 	}
 
-	duration, err := t.probe(ctx, input)
+	probed, err := t.probe(ctx, input)
 	if err != nil {
 		return trackID, err
 	}
@@ -101,53 +102,67 @@ func (t *Transcoder) Run(ctx context.Context, job *store.Job) (trackID string, e
 	if err := t.uploadHLS(ctx, out, prefix); err != nil {
 		return trackID, fmt.Errorf("upload hls: %w", err)
 	}
-	return trackID, t.store.SetTrackReady(ctx, trackID, prefix+"/index.m3u8", int(duration.Milliseconds()))
+	if probed.coverStream >= 0 {
+		coverPath := filepath.Join(dir, "cover.jpg")
+		if err := t.extractCover(ctx, input, probed.coverStream, coverPath); err == nil {
+			key := prefix + "/cover.jpg"
+			if err := t.s3.Upload(ctx, key, coverPath, "image/jpeg", "public, max-age=31536000, immutable"); err == nil {
+				probed.meta.CoverKey = key
+			}
+		}
+	}
+	return trackID, t.store.SetTrackReady(ctx, trackID, prefix+"/index.m3u8", int(probed.duration.Milliseconds()), probed.meta)
 }
 
-func (t *Transcoder) probe(ctx context.Context, input string) (time.Duration, error) {
+// probedFile is what ffprobe can tell us before we re-encode. A missing cover
+// is not a failure: the track still becomes playable.
+type probedFile struct {
+	duration    time.Duration
+	meta        store.TrackMeta
+	coverStream int
+}
+
+func (t *Transcoder) probe(ctx context.Context, input string) (probedFile, error) {
 	cmd := exec.CommandContext(ctx, t.ffprobe,
 		"-v", "error",
 		"-protocol_whitelist", "file",
 		"-format_whitelist", formatWhitelist,
-		"-show_entries", "format=duration:stream=codec_type",
+		"-show_entries", "format=duration,bit_rate:format_tags:stream=codec_type,codec_name,sample_rate,channels,bit_rate:stream_tags:stream_disposition=attached_pic",
 		"-of", "json", input,
 	)
 	raw, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
-			return 0, ctx.Err()
+			return probedFile{}, ctx.Err()
 		}
-		return 0, &PermanentError{Reason: "this file isn't a supported audio format"}
+		return probedFile{}, &PermanentError{Reason: "this file isn't a supported audio format"}
 	}
-	var res struct {
-		Streams []struct {
-			CodecType string `json:"codec_type"`
-		} `json:"streams"`
-		Format struct {
-			Duration string `json:"duration"`
-		} `json:"format"`
+	probed, err := parseProbe(raw)
+	if err != nil {
+		return probedFile{}, err
 	}
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return 0, &PermanentError{Reason: "could not read audio metadata"}
-	}
-	hasAudio := false
-	for _, s := range res.Streams {
-		if s.CodecType == "audio" {
-			hasAudio = true
+	return probed, nil
+}
+
+func (t *Transcoder) extractCover(ctx context.Context, input string, stream int, dest string) error {
+	cmd := exec.CommandContext(ctx, t.ffmpeg,
+		"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+		"-protocol_whitelist", "file",
+		"-format_whitelist", formatWhitelist,
+		"-i", input,
+		"-map", fmt.Sprintf("0:%d", stream),
+		"-frames:v", "1",
+		"-vf", "scale=600:600:force_original_aspect_ratio=increase,crop=600:600",
+		"-q:v", "4",
+		dest,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+		return fmt.Errorf("cover: %s", firstLine(string(output)))
 	}
-	if !hasAudio {
-		return 0, &PermanentError{Reason: "the file has no audio stream"}
-	}
-	secs, err := strconv.ParseFloat(res.Format.Duration, 64)
-	if err != nil || secs <= 0 {
-		return 0, &PermanentError{Reason: "could not determine track length"}
-	}
-	d := time.Duration(secs * float64(time.Second))
-	if d > maxDuration {
-		return 0, &PermanentError{Reason: "tracks can be at most 2 hours long"}
-	}
-	return d, nil
+	return nil
 }
 
 // uploadHLS uploads segments before the playlist, so a visible playlist always
@@ -175,6 +190,151 @@ func (t *Transcoder) uploadHLS(ctx context.Context, dir, prefix string) error {
 		return errors.New("ffmpeg produced no playlist")
 	}
 	return t.s3.Upload(ctx, prefix+"/"+playlist, filepath.Join(dir, playlist), "application/vnd.apple.mpegurl", "public, max-age=300")
+}
+
+const maxLyricsBytes = 20 * 1024
+
+type ffprobeDoc struct {
+	Streams []struct {
+		CodecType   string            `json:"codec_type"`
+		CodecName   string            `json:"codec_name"`
+		SampleRate  string            `json:"sample_rate"`
+		Channels    int               `json:"channels"`
+		BitRate     string            `json:"bit_rate"`
+		Tags        map[string]string `json:"tags"`
+		Disposition struct {
+			AttachedPic int `json:"attached_pic"`
+		} `json:"disposition"`
+	} `json:"streams"`
+	Format struct {
+		Duration string            `json:"duration"`
+		BitRate  string            `json:"bit_rate"`
+		Tags     map[string]string `json:"tags"`
+	} `json:"format"`
+}
+
+func parseProbe(raw []byte) (probedFile, error) {
+	var doc ffprobeDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return probedFile{}, &PermanentError{Reason: "could not read audio metadata"}
+	}
+	out := probedFile{coverStream: -1}
+	tags := map[string]string{}
+	var audio *struct {
+		codec      string
+		sampleRate int
+		channels   int
+		bitRate    int
+	}
+	for i, s := range doc.Streams {
+		mergeTags(tags, s.Tags)
+		if s.Disposition.AttachedPic == 1 && out.coverStream < 0 {
+			out.coverStream = i
+		}
+		if s.CodecType == "audio" && audio == nil {
+			sr, _ := strconv.Atoi(s.SampleRate)
+			br, _ := strconv.Atoi(s.BitRate)
+			audio = &struct {
+				codec      string
+				sampleRate int
+				channels   int
+				bitRate    int
+			}{codec: s.CodecName, sampleRate: sr, channels: s.Channels, bitRate: br}
+		}
+	}
+	if audio == nil {
+		return probedFile{}, &PermanentError{Reason: "the file has no audio stream"}
+	}
+	secs, err := strconv.ParseFloat(doc.Format.Duration, 64)
+	if err != nil || secs <= 0 {
+		return probedFile{}, &PermanentError{Reason: "could not determine track length"}
+	}
+	out.duration = time.Duration(secs * float64(time.Second))
+	if out.duration > maxDuration {
+		return probedFile{}, &PermanentError{Reason: "tracks can be at most 2 hours long"}
+	}
+	mergeTags(tags, doc.Format.Tags)
+	br := audio.bitRate
+	if br <= 0 {
+		br, _ = strconv.Atoi(doc.Format.BitRate)
+	}
+	out.meta = store.TrackMeta{
+		Title:      clip(tags["title"], 120),
+		Artist:     clip(firstTag(tags, "artist", "album_artist"), 200),
+		Album:      clip(tags["album"], 200),
+		Year:       parseYear(firstTag(tags, "date", "year")),
+		Genre:      clip(tags["genre"], 80),
+		Lyrics:     clipBytes(lyricsFrom(tags), maxLyricsBytes),
+		Codec:      clip(audio.codec, 40),
+		SampleRate: audio.sampleRate,
+		Channels:   audio.channels,
+		Bitrate:    br,
+	}
+	return out, nil
+}
+
+func mergeTags(dst map[string]string, src map[string]string) {
+	for k, v := range src {
+		key := strings.ToLower(strings.TrimSpace(k))
+		if key == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		// Format tags win over stream tags: they are written second.
+		dst[key] = v
+	}
+}
+
+func firstTag(tags map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(tags[k]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func lyricsFrom(tags map[string]string) string {
+	if v := firstTag(tags, "lyrics-eng", "lyrics", "unsyncedlyrics"); v != "" {
+		return v
+	}
+	for k, v := range tags {
+		if strings.HasPrefix(k, "lyrics") && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func parseYear(s string) int {
+	s = strings.TrimSpace(s)
+	if len(s) < 4 {
+		return 0
+	}
+	n, err := strconv.Atoi(s[:4])
+	if err != nil || n < 1000 || n > 9999 {
+		return 0
+	}
+	return n
+}
+
+func clip(s string, maxRunes int) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\x00", ""))
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:maxRunes])
+}
+
+func clipBytes(s string, max int) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\x00", ""))
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }
 
 func firstLine(s string) string {

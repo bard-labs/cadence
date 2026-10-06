@@ -19,11 +19,42 @@ type Track struct {
 	DurationMs       *int      `json:"durationMs"`
 	Error            *string   `json:"error"`
 	CreatedAt        time.Time `json:"createdAt"`
+
+	Artist     *string `json:"artist"`
+	Album      *string `json:"album"`
+	Year       *int    `json:"year"`
+	Genre      *string `json:"genre"`
+	CoverKey   string  `json:"-"`
+	CoverURL   string  `json:"coverUrl,omitempty"`
+	Codec      *string `json:"codec"`
+	SampleRate *int    `json:"sampleRate"`
+	Channels   *int    `json:"channels"`
+	Bitrate    *int    `json:"bitrate"`
+	HasLyrics  bool    `json:"hasLyrics"`
+	// Lyrics is only loaded for single-track reads to keep the library payload small.
+	Lyrics *string `json:"lyrics,omitempty"`
+}
+
+// TrackMeta is what the worker learns from the file itself.
+type TrackMeta struct {
+	Title      string
+	Artist     string
+	Album      string
+	Year       int
+	Genre      string
+	Lyrics     string
+	CoverKey   string
+	Codec      string
+	SampleRate int
+	Channels   int
+	Bitrate    int
 }
 
 const trackColumns = `
 	t.id, t.title, t.status, t.uploader_id, u.username, coalesce(tr.manifest_key, ''),
-	t.duration_ms, t.error, t.created_at`
+	t.duration_ms, t.error, t.created_at,
+	t.artist, t.album, t.year, t.genre, coalesce(t.cover_key, ''), t.codec, t.sample_rate,
+	t.channels, t.source_bitrate, t.lyrics IS NOT NULL`
 
 const trackFrom = `
 	FROM tracks t
@@ -33,19 +64,23 @@ const trackFrom = `
 func scanTrack(r pgx.Row) (Track, error) {
 	var t Track
 	err := r.Scan(&t.ID, &t.Title, &t.Status, &t.UploaderID, &t.UploaderUsername, &t.ManifestKey,
-		&t.DurationMs, &t.Error, &t.CreatedAt)
+		&t.DurationMs, &t.Error, &t.CreatedAt,
+		&t.Artist, &t.Album, &t.Year, &t.Genre, &t.CoverKey, &t.Codec, &t.SampleRate,
+		&t.Channels, &t.Bitrate, &t.HasLyrics)
 	return t, err
 }
 
 // CreateTrack inserts the track and its transcode job atomically, so a track
 // can never be stuck in "processing" without a job to process it.
-func (s *Store) CreateTrack(ctx context.Context, uploaderID, title, originalKey string, size int64) (string, error) {
+// titleAuto marks a title derived from the file name, which the file's own
+// title tag may replace once the worker has read it.
+func (s *Store) CreateTrack(ctx context.Context, uploaderID, title string, titleAuto bool, originalKey string, size int64) (string, error) {
 	var id string
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO tracks (uploader_id, title, original_key, size_bytes, status)
-			VALUES ($1, $2, $3, $4, 'processing') RETURNING id`,
-			uploaderID, title, originalKey, size,
+			INSERT INTO tracks (uploader_id, title, title_auto, original_key, size_bytes, status)
+			VALUES ($1, $2, $3, $4, $5, 'processing') RETURNING id`,
+			uploaderID, title, titleAuto, originalKey, size,
 		).Scan(&id); err != nil {
 			return err
 		}
@@ -66,6 +101,12 @@ func (s *Store) ListTracks(ctx context.Context, limit int) ([]Track, error) {
 
 func (s *Store) TrackByID(ctx context.Context, id string) (Track, error) {
 	t, err := scanTrack(s.pool.QueryRow(ctx, `SELECT `+trackColumns+trackFrom+` WHERE t.id = $1`, id))
+	if err != nil {
+		return t, mapErr(err)
+	}
+	if t.HasLyrics {
+		err = s.pool.QueryRow(ctx, `SELECT lyrics FROM tracks WHERE id = $1`, id).Scan(&t.Lyrics)
+	}
 	return t, mapErr(err)
 }
 
@@ -75,7 +116,7 @@ func (s *Store) TrackOriginalKey(ctx context.Context, trackID string) (string, e
 	return key, mapErr(err)
 }
 
-func (s *Store) SetTrackReady(ctx context.Context, trackID, manifestKey string, durationMs int) error {
+func (s *Store) SetTrackReady(ctx context.Context, trackID, manifestKey string, durationMs int, m TrackMeta) error {
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO track_renditions (track_id, variant, manifest_key) VALUES ($1, 'hls_aac', $2)
@@ -83,9 +124,17 @@ func (s *Store) SetTrackReady(ctx context.Context, trackID, manifestKey string, 
 			trackID, manifestKey); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx,
-			`UPDATE tracks SET status = 'ready', duration_ms = $2, error = NULL WHERE id = $1`,
-			trackID, durationMs)
+		_, err := tx.Exec(ctx, `
+			UPDATE tracks SET
+				status = 'ready', duration_ms = $2, error = NULL,
+				title = CASE WHEN title_auto AND $3 <> '' THEN $3 ELSE title END,
+				artist = nullif($4, ''), album = nullif($5, ''), year = nullif($6, 0),
+				genre = nullif($7, ''), lyrics = nullif($8, ''), cover_key = nullif($9, ''),
+				codec = nullif($10, ''), sample_rate = nullif($11, 0), channels = nullif($12, 0),
+				source_bitrate = nullif($13, 0)
+			WHERE id = $1`,
+			trackID, durationMs, m.Title, m.Artist, m.Album, m.Year, m.Genre, m.Lyrics, m.CoverKey,
+			m.Codec, m.SampleRate, m.Channels, m.Bitrate)
 		return err
 	})
 	return mapErr(err)
