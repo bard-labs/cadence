@@ -1,172 +1,158 @@
-# Deploy Cadence on a home Linux server (Cloudflare)
+# Deploy Cadence (home server + Cloudflare DNS, no Zero Trust)
 
 Public URL: `https://cadence.bardiamardan.xyz`
 
-## Why not Vercel?
+You do **not** need Cloudflare Zero Trust (and no credit card).  
+Use the free Cloudflare DNS plan + a small DDNS script + router port forward.
 
-**Correct — we can’t put the whole app on Vercel.** Vercel is fine for the Next.js UI alone. Cadence also needs:
+## Why not Vercel / Zero Trust?
 
-- Postgres + Redis
-- MinIO (object storage) and browser uploads to it
-- A long-running Go API with WebSockets
-- An ffmpeg worker for HLS transcoding
+- **Vercel**: can’t run Postgres, Redis, MinIO, WebSockets, or ffmpeg.
+- **Zero Trust / Tunnel**: nice, but the free signup often demands a card. Skip it.
 
-Those need an always-on Linux box. Your home server + Cloudflare is the right setup.
+## Architecture
 
-## Recommended: Cloudflare Tunnel (safer than DDNS + port forward)
-
-You do **not** open ports 80/443 on your router. You do **not** need a static IP. Cloudflare keeps a tunnel out from your server and maps `cadence.bardiamardan.xyz` to it. When your ISP changes your public IP, the tunnel reconnects by itself.
-
-### A. Cloudflare DNS (once)
-
-1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com) → select `bardiamardan.xyz`.
-2. **DNS** → confirm the zone is **Active** (Cloudflare nameservers at your registrar).
-3. You do **not** need to create an A record yourself if you use a Tunnel — the tunnel connector creates/updates the CNAME.
-
-Optional hardening while you set this up:
-
-- **SSL/TLS** → Overview → mode **Full** (Tunnel) or **Full (strict)** later
-- **SSL/TLS** → Edge Certificates → **Always Use HTTPS** = On
-- **SSL/TLS** → Edge Certificates → **Minimum TLS Version** = 1.2
-
-### B. Create the Tunnel
-
-1. Cloudflare Dashboard → **Zero Trust** (may ask to create a free team name once).
-2. **Networks** → **Tunnels** → **Create a tunnel**.
-3. Type: **Cloudflared**.
-4. Name: `cadence-home` → Save.
-5. Choose **Docker** as the install method. Copy the long `TUNNEL_TOKEN=eyJ...` value (or the token alone).
-6. **Public Hostname** tab → **Add**:
-   - Subdomain: `cadence`
-   - Domain: `bardiamardan.xyz`
-   - Type: `HTTP`
-   - URL: `caddy:80`
-   - Save
-
-If the UI asks for a local service URL before the container network exists, set it to `http://caddy:80` after compose is up, or use `http://127.0.0.1:8088` if cloudflared runs in host mode. With this repo’s compose file, keep cloudflared on the same Docker network and use **`http://caddy:80`**.
-
-### C. Server deploy (fresh DB)
-
-```bash
-# on your Mac, from the repo
-rsync -az --delete \
-  --exclude node_modules --exclude .git --exclude .next --exclude 'apps/web/.env.local' \
-  ./ cursor@192.168.100.100:~/cadence/
-
-ssh cursor@192.168.100.100
-cd ~/cadence
-cp deploy/.env.prod.example deploy/.env.prod
-nano deploy/.env.prod   # paste secrets + CLOUDFLARE_TUNNEL_TOKEN
-
-# fresh volumes = empty DB
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod \
-  --profile tunnel down -v
-
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod \
-  --profile tunnel up -d --build
+```
+Friends → HTTPS → Cloudflare (free proxy)
+                 → HTTP → your public IP:80
+                 → router forward → 192.168.100.100:80
+                 → Caddy → web / api / minio
 ```
 
-Check:
-
-```bash
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod ps
-curl -sS http://127.0.0.1:8088/readyz
-curl -sSI https://cadence.bardiamardan.xyz | head
-```
-
-Open `https://cadence.bardiamardan.xyz/login` and register a new username (empty DB).
-
-### D. Cloudflare access tips (optional but good)
-
-- **Zero Trust → Access → Applications**: put `cadence.bardiamardan.xyz` behind an email OTP allowlist if you want only friends.
-- Or leave it public and rely on Cadence’s username/password.
+Your ISP can change the public IP; the DDNS script updates the Cloudflare A record every few minutes.
 
 ---
 
-## Alternative: classic DDNS + router port forward
+## Step 1 — Cloudflare DNS (free, no card)
 
-Use this only if you refuse Tunnel. It is **less safe** (opens 80/443 on your home IP).
+1. Open [dash.cloudflare.com](https://dash.cloudflare.com) → zone **`bardiamardan.xyz`**
+2. **SSL/TLS** → Overview → encryption mode **Flexible**  
+   (Cloudflare gives visitors HTTPS; your server only needs port 80 for now.)
+3. **SSL/TLS** → Edge Certificates → **Always Use HTTPS** = On
+4. **DNS** → **Records** → **Add record**:
 
-### 1) Cloudflare API token
-
-1. [API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token**.
-2. Use template **Edit zone DNS**.
-3. Zone Resources → Include → Specific zone → `bardiamardan.xyz`.
-4. Create → copy the token once.
-
-### 2) DNS record
-
-DNS → Add record:
-
-| Type | Name | Content | Proxy |
+| Type | Name | IPv4 address | Proxy status |
 | --- | --- | --- | --- |
-| A | `cadence` | your current public IP | Proxied (orange cloud) |
+| A | `cadence` | your current public IP (see below) | **Proxied** (orange cloud) |
 
-### 3) Update IP when it changes (on the server)
+Find your public IP on your Mac:
 
 ```bash
-sudo apt-get update && sudo apt-get install -y curl jq
-sudo tee /usr/local/bin/cf-ddns.sh >/dev/null <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-TOKEN="YOUR_API_TOKEN"
-ZONE_ID="YOUR_ZONE_ID"
-RECORD_ID="YOUR_RECORD_ID"
-NAME="cadence.bardiamardan.xyz"
-IP=$(curl -4 -fsS https://api.ipify.org)
-CUR=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
-  | jq -r '.result.content')
-if [ "$IP" != "$CUR" ]; then
-  curl -fsS -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
-    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    --data "{\"type\":\"A\",\"name\":\"$NAME\",\"content\":\"$IP\",\"proxied\":true}" >/dev/null
-  echo "$(date -Is) updated $NAME -> $IP"
-else
-  echo "$(date -Is) ok $IP"
-fi
+curl -4 https://api.ipify.org; echo
+```
+
+Right now it was roughly `91.107.255.53` — re-check before saving; ISPs change it.
+
+---
+
+## Step 2 — Cloudflare API token (for DDNS only)
+
+1. [API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token**
+2. Use template **Edit zone DNS**
+3. Zone Resources → Include → Specific zone → **`bardiamardan.xyz`**
+4. Continue → Create → **copy the token once** (you won’t see it again)
+
+Get Zone ID + Record ID (on your Mac):
+
+```bash
+export CF_API_TOKEN='paste-token-here'
+
+# Zone ID
+curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones?name=bardiamardan.xyz" \
+  | jq -r '.result[0].id'
+
+# Record ID (after you created the A record)
+export CF_ZONE_ID='paste-zone-id'
+curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?name=cadence.bardiamardan.xyz" \
+  | jq -r '.result[0].id'
+```
+
+---
+
+## Step 3 — Router port forward
+
+On the home gateway (`192.168.100.1`):
+
+| External port | Protocol | Internal IP | Internal port |
+| --- | --- | --- | --- |
+| **80** | TCP | **192.168.100.100** | **80** |
+
+You do **not** need 443 on the router while SSL mode is **Flexible**.
+
+Optional later (harder, better): Cloudflare Origin Certificate + Full SSL + forward 443.
+
+---
+
+## Step 4 — DDNS on the server
+
+```bash
+ssh cursor@192.168.100.100
+
+sudo mkdir -p /etc/cadence
+sudo tee /etc/cadence/cf-ddns.env >/dev/null <<'EOF'
+CF_API_TOKEN=paste-token-here
+CF_ZONE_ID=paste-zone-id
+CF_RECORD_ID=paste-record-id
+CF_RECORD_NAME=cadence.bardiamardan.xyz
 EOF
-sudo chmod 700 /usr/local/bin/cf-ddns.sh
-```
+sudo chmod 600 /etc/cadence/cf-ddns.env
 
-Get IDs:
+sudo install -m 755 ~/cadence/deploy/cf-ddns.sh /usr/local/bin/cf-ddns.sh
+sudo apt-get update && sudo apt-get install -y jq curl
 
-```bash
-# Zone ID: Cloudflare → domain → Overview → Zone ID
-# Record ID:
-curl -sS -H "Authorization: Bearer YOUR_API_TOKEN" \
-  "https://api.cloudflare.com/client/v4/zones/ZONE_ID/dns_records?name=cadence.bardiamardan.xyz" \
-  | jq '.result[0].id'
-```
+# test once
+sudo /usr/local/bin/cf-ddns.sh
 
-Cron every 5 minutes:
-
-```bash
+# every 5 minutes
 echo '*/5 * * * * root /usr/local/bin/cf-ddns.sh >> /var/log/cf-ddns.log 2>&1' \
   | sudo tee /etc/cron.d/cf-ddns
+sudo chmod 644 /etc/cron.d/cf-ddns
 ```
-
-### 4) Router port forward
-
-On `192.168.100.1` (your gateway):
-
-| External | Internal IP | Internal port |
-| --- | --- | --- |
-| TCP 80 | 192.168.100.100 | 80 (or 8088) |
-| TCP 443 | 192.168.100.100 | 443 (or terminate TLS on Cloudflare only) |
-
-With Cloudflare orange-cloud proxy, browsers hit Cloudflare; Cloudflare connects to your home IP on **80/443**. Prefer Tunnel so you never open those ports.
-
-SSL mode if using DDNS: **Full** only if origin has a cert; easier to keep Tunnel.
 
 ---
 
-## Ops cheatsheet
+## Step 5 — App stack (already deployed)
+
+Cadence is installed under `~/cadence` with a **fresh empty database**.
 
 ```bash
 cd ~/cadence
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod --profile tunnel logs -f api
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod --profile tunnel ps
-# wipe library/users again
-sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod --profile tunnel down -v
+sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod ps
+curl -sS http://127.0.0.1/readyz
 ```
+
+Expose / refresh Caddy on host port 80:
+
+```bash
+cd ~/cadence
+sudo docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d caddy
+```
+
+Open:
+
+- LAN: `http://192.168.100.100/`
+- Internet (after DNS + forward): `https://cadence.bardiamardan.xyz`
+
+Register a new username (DB starts empty).
+
+---
+
+## Checklist if the site doesn’t load
+
+1. DNS: `dig +short cadence.bardiamardan.xyz` → Cloudflare anycast IPs (not your home IP) when Proxied
+2. Router: port 80 → `192.168.100.100:80`
+3. Server: `curl -sS http://127.0.0.1/readyz` → `ok`
+4. From outside (phone LTE): `https://cadence.bardiamardan.xyz`
+5. Cloudflare SSL mode = **Flexible**
+6. DDNS log: `sudo tail /var/log/cf-ddns.log`
+
+---
+
+## Security notes
+
+- Change the weak SSH password on the server.
+- Prefer SSH keys.
+- Cloudflare proxy hides your real home IP from casual scanners (good).
+- Still: only forward port 80, keep SSH off the internet if you can (or change port / allowlist).
