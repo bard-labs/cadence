@@ -21,12 +21,26 @@ export function Vinyl({
     <div className="relative isolate size-56 shrink-0 sm:size-72">
       <div
         aria-hidden
-        className="absolute -inset-16 -z-10"
-        style={{ background: `radial-gradient(closest-side, oklch(0.55 0.14 ${hue} / 0.35), transparent)` }}
+        className="absolute -inset-20 -z-10"
+        style={{
+          background: `
+            radial-gradient(closest-side, oklch(0.55 0.22 320 / 0.4), transparent 70%),
+            radial-gradient(closest-side, oklch(0.5 0.16 ${hue} / 0.28), transparent 72%),
+            radial-gradient(circle at 50% 80%, oklch(0.6 0.12 220 / 0.22), transparent 55%)
+          `,
+        }}
+      />
+      <div
+        aria-hidden
+        className="absolute inset-[-6%] -z-10 rounded-full opacity-70"
+        style={{
+          background: `conic-gradient(from 200deg, oklch(0.55 0.22 320 / 0.0), oklch(0.6 0.2 320 / 0.45), oklch(0.7 0.12 220 / 0.35), oklch(0.5 0.18 290 / 0.4), oklch(0.55 0.22 320 / 0.0))`,
+          filter: "blur(14px)",
+        }}
       />
       <div
         className={cn(
-          "relative size-full overflow-hidden rounded-full border border-white/10 bg-muted shadow-2xl shadow-black/50",
+          "relative size-full overflow-hidden rounded-full border border-white/12 bg-muted shadow-2xl shadow-black/60",
           "animate-[spin_24s_linear_infinite] motion-reduce:animate-none",
         )}
         style={{ animationPlayState: spinning ? "running" : "paused" }}

@@ -31,6 +31,8 @@ export type FxState = {
   tempo: number;
   visual: VisualMode;
   djOpen: boolean;
+  /** Lyrics panel overlay inside DJ mode (toggled from the Dynamic Island). */
+  djLyricsOverlay: boolean;
   lyricsOpen: boolean;
   eqOpen: boolean;
   statsOpen: boolean;
@@ -45,6 +47,7 @@ export type FxState = {
   setVisual: (mode: VisualMode) => void;
   applyPreset: (p: EqPreset) => void;
   setDjOpen: (on: boolean) => void;
+  setDjLyricsOverlay: (on: boolean) => void;
   setLyricsOpen: (on: boolean) => void;
   setEqOpen: (on: boolean) => void;
   setStatsOpen: (on: boolean) => void;
@@ -64,6 +67,7 @@ const defaults = {
   tempo: 1,
   visual: "off" as VisualMode,
   djOpen: false,
+  djLyricsOverlay: true,
   lyricsOpen: false,
   eqOpen: false,
   statsOpen: false,
@@ -94,6 +98,7 @@ export const useFx = create<FxState>()(
       setVisual: (visual) => set({ visual }),
       applyPreset: (p) => set({ bands: [...EQ_PRESETS[p]] }),
       setDjOpen: (djOpen) => set({ djOpen }),
+      setDjLyricsOverlay: (djLyricsOverlay) => set({ djLyricsOverlay }),
       setLyricsOpen: (lyricsOpen) => set({ lyricsOpen }),
       setEqOpen: (eqOpen) => set({ eqOpen }),
       setStatsOpen: (statsOpen) => set({ statsOpen }),
@@ -113,6 +118,7 @@ export const useFx = create<FxState>()(
         lofi: s.lofi,
         tempo: s.tempo,
         visual: s.visual,
+        djLyricsOverlay: s.djLyricsOverlay,
       }),
     },
   ),

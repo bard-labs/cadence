@@ -68,7 +68,7 @@ function Shell({ me, children }: { me: User; children: ReactNode }) {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-xl pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-30 border-b border-white/8 bg-background/55 backdrop-blur-xl pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-4 sm:px-6">
           <Link
             href="/"
