@@ -34,7 +34,17 @@ func (s *S3) EnsureBucket(ctx context.Context) error {
 		return err
 	}
 	if !exists {
-		return s.client.MakeBucket(ctx, s.bucket, minio.MakeBucketOptions{})
+		if err := s.client.MakeBucket(ctx, s.bucket, minio.MakeBucketOptions{}); err != nil {
+			return err
+		}
+	}
+	// Public read for HLS segments (local MinIO dev; tighten in production).
+	policy := fmt.Sprintf(
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`,
+		s.bucket,
+	)
+	if err := s.client.SetBucketPolicy(ctx, s.bucket, policy); err != nil {
+		return err
 	}
 	return nil
 }
