@@ -59,7 +59,7 @@ func (a *API) Router() http.Handler {
 	r.Get("/ws", a.websocket)
 
 	r.Route("/v1", func(v chi.Router) {
-		v.Use(middleware.Timeout(15 * time.Second))
+		v.Use(requestTimeout(15 * time.Second))
 		v.Use(httprate.Limit(300, time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP), httprate.WithLimitHandler(a.rateLimitExceeded)))
 
 		v.With(httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP), httprate.WithLimitHandler(a.rateLimitExceeded))).
