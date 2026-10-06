@@ -1,10 +1,8 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { useFx } from "@/features/player/fx-store";
 import { usePlayer } from "@/features/player/player-store";
 import { serverClock } from "@/lib/realtime/clock";
@@ -33,46 +31,23 @@ export function StatsPanel() {
   const t = p.track;
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.aside
-          role="dialog"
-          aria-label="Sync stats"
-          initial={{ y: 40, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 40, opacity: 0 }}
-          className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 mx-auto w-full max-w-md overflow-hidden rounded-t-3xl border border-border/70 bg-card/95 p-4 font-mono text-xs shadow-2xl backdrop-blur-xl sm:bottom-24 sm:rounded-3xl"
-        >
-          <div className="mb-3 flex items-center gap-2">
-            <h2 className="text-sm font-semibold tracking-normal">Stats for nerds</h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="ml-auto"
-              onClick={() => setOpen(false)}
-              aria-label="Close stats"
-            >
-              <X />
-            </Button>
-          </div>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
-            <Row k="socket" v={status} />
-            <Row k="mode" v={p.mode} />
-            <Row k="clock offset" v={`${Math.round(serverClock.offsetMs)} ms`} />
-            <Row k="rtt" v={serverClock.rttMs != null ? `${Math.round(serverClock.rttMs)} ms` : "—"} />
-            <Row k="drift" v={p.driftMs != null ? `${p.driftMs} ms` : "—"} />
-            <Row k="seq" v={room?.seq ?? "—"} />
-            <Row k="controllers" v={(room?.controllers ?? []).length} />
-            <Row k="codec" v={t?.codec ?? "—"} />
-            <Row k="sample rate" v={t?.sampleRate ? `${t.sampleRate} Hz` : "—"} />
-            <Row k="channels" v={t?.channels ?? "—"} />
-            <Row k="bitrate" v={t?.bitrate ? `${Math.round(t.bitrate / 1000)} kbps` : "—"} />
-            <Row k="buffer" v={bufferLabel()} />
-          </dl>
-          <DriftSpark values={history} />
-        </motion.aside>
-      )}
-    </AnimatePresence>
+    <BottomSheet open={open} onClose={() => setOpen(false)} title="Stats for nerds" className="font-mono text-xs">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
+        <Row k="socket" v={status} />
+        <Row k="mode" v={p.mode} />
+        <Row k="clock offset" v={`${Math.round(serverClock.offsetMs)} ms`} />
+        <Row k="rtt" v={serverClock.rttMs != null ? `${Math.round(serverClock.rttMs)} ms` : "—"} />
+        <Row k="drift" v={p.driftMs != null ? `${p.driftMs} ms` : "—"} />
+        <Row k="seq" v={room?.seq ?? "—"} />
+        <Row k="controllers" v={(room?.controllers ?? []).length} />
+        <Row k="codec" v={t?.codec ?? "—"} />
+        <Row k="sample rate" v={t?.sampleRate ? `${t.sampleRate} Hz` : "—"} />
+        <Row k="channels" v={t?.channels ?? "—"} />
+        <Row k="bitrate" v={t?.bitrate ? `${Math.round(t.bitrate / 1000)} kbps` : "—"} />
+        <Row k="buffer" v={bufferLabel()} />
+      </dl>
+      <DriftSpark values={history} />
+    </BottomSheet>
   );
 }
 

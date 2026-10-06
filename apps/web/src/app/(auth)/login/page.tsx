@@ -16,12 +16,12 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <Logo />
           <div className="space-y-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">Listen together</h1>
-            <p className="text-sm text-muted-foreground">Pick a username to get started. No password needed.</p>
+            <p className="text-sm text-muted-foreground">Username and password. No email.</p>
           </div>
         </div>
         <LoginForm next={safeNext(typeof next === "string" ? next : null)} />
         <p className="text-center text-xs text-muted-foreground">
-          Guest names belong to this browser. If you sign out, that name stays reserved.
+          Create an account once, then sign in from any browser with the same username and password.
         </p>
       </div>
     </main>

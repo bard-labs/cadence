@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -77,7 +78,19 @@ func (a *API) createTrack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listTracks(w http.ResponseWriter, r *http.Request) {
-	tracks, err := a.store.ListTracks(r.Context(), 200)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) > 80 {
+		q = q[:80]
+	}
+	tracks, total, err := a.store.ListTracksPage(r.Context(), page, pageSize, q)
 	if err != nil {
 		a.writeError(w, r, err)
 		return
@@ -85,7 +98,17 @@ func (a *API) listTracks(w http.ResponseWriter, r *http.Request) {
 	for i := range tracks {
 		tracks[i] = a.withURL(tracks[i])
 	}
-	writeJSON(w, http.StatusOK, nonNil(tracks))
+	pages := 0
+	if total > 0 {
+		pages = (total + pageSize - 1) / pageSize
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":      nonNil(tracks),
+		"page":       page,
+		"pageSize":   pageSize,
+		"total":      total,
+		"totalPages": pages,
+	})
 }
 
 func (a *API) getTrack(w http.ResponseWriter, r *http.Request) {

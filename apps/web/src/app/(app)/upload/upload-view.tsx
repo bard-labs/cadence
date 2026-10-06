@@ -9,7 +9,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { PageHeader } from "@/components/ui/state";
-import { api, errorMessage, queryKeys } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { ACCEPTED_AUDIO, audioContentType, titleFromFilename, uploadToStorage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -101,7 +101,7 @@ export function UploadView() {
       // A title left as the file name may be replaced by the tag inside the file.
       const titleAuto = cleanTitle === titleFromFilename(file.name);
       await api.createTrack(cleanTitle, target.objectKey, titleAuto);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.tracks });
+      await queryClient.invalidateQueries({ queryKey: ["tracks"] });
       setPhase({ kind: "done", title: cleanTitle });
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";

@@ -38,17 +38,17 @@ export function ImmersivePlayer() {
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             {art && (
               // biome-ignore lint/performance/noImgElement: blurred backdrop from dynamic cover
-              <img src={art} alt="" className="size-full scale-125 object-cover opacity-30 blur-3xl" />
+              <img src={art} alt="" className="size-full scale-125 object-cover opacity-25 blur-3xl" />
             )}
-            <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/70 to-background" />
             {visual !== "off" && (
-              <div className="absolute inset-x-0 bottom-0 h-1/2 opacity-80">
+              <div className="absolute inset-0 opacity-80">
                 <Visualizer hue={hue} />
               </div>
             )}
+            <div className="absolute inset-0 bg-gradient-to-b from-background/55 via-background/35 to-background/70" />
           </div>
 
-          <div className="relative z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8">
+          <div className="relative z-10 flex shrink-0 items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8">
             <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">DJ mode</p>
             <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Exit DJ mode">
               <X />

@@ -7,12 +7,22 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode/utf8"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const CookieName = "cadence_session"
 
+const (
+	minPasswordRunes = 8
+	maxPasswordBytes = 72 // bcrypt's hard limit
+	bcryptCost       = 12
+)
+
 var (
 	ErrInvalidUsername = errors.New("username must be 3-20 characters: lowercase letters, numbers, or underscores")
+	ErrInvalidPassword = errors.New("password must be 8–72 characters")
 	usernamePattern    = regexp.MustCompile(`^[a-z0-9_]{3,20}$`)
 )
 
@@ -40,4 +50,21 @@ func NewToken() (token string, hash []byte, err error) {
 func HashToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
+}
+
+// NormalizePassword validates length only. No email, no complexity theatre.
+func NormalizePassword(raw string) (string, error) {
+	if utf8.RuneCountInString(raw) < minPasswordRunes || len(raw) > maxPasswordBytes {
+		return "", ErrInvalidPassword
+	}
+	return raw, nil
+}
+
+func HashPassword(password string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	return string(b), err
+}
+
+func CheckPassword(hash, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }

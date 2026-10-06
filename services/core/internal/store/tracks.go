@@ -91,12 +91,40 @@ func (s *Store) CreateTrack(ctx context.Context, uploaderID, title string, title
 	return id, mapErr(err)
 }
 
-func (s *Store) ListTracks(ctx context.Context, limit int) ([]Track, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+trackColumns+trackFrom+` ORDER BY t.created_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, mapErr(err)
+// ListTracksPage returns one page of tracks plus the total matching count.
+// q filters title, artist, or uploader when non-empty.
+func (s *Store) ListTracksPage(ctx context.Context, page, pageSize int, q string) ([]Track, int, error) {
+	if page < 1 {
+		page = 1
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Track, error) { return scanTrack(r) })
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 50 {
+		pageSize = 50
+	}
+	offset := (page - 1) * pageSize
+	like := "%" + q + "%"
+	var total int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tracks t
+		JOIN users u ON u.id = t.uploader_id
+		WHERE $1 = '' OR t.title ILIKE $2 OR coalesce(t.artist, '') ILIKE $2 OR u.username ILIKE $2`,
+		q, like,
+	).Scan(&total)
+	if err != nil {
+		return nil, 0, mapErr(err)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+trackColumns+trackFrom+`
+		WHERE $1 = '' OR t.title ILIKE $2 OR coalesce(t.artist, '') ILIKE $2 OR u.username ILIKE $2
+		ORDER BY t.created_at DESC
+		LIMIT $3 OFFSET $4`, q, like, pageSize, offset)
+	if err != nil {
+		return nil, 0, mapErr(err)
+	}
+	tracks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Track, error) { return scanTrack(r) })
+	return tracks, total, mapErr(err)
 }
 
 func (s *Store) TrackByID(ctx context.Context, id string) (Track, error) {

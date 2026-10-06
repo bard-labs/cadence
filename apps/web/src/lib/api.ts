@@ -135,7 +135,10 @@ async function request<T>(path: string, { method = "GET", body, signal }: Reques
 }
 
 export const api = {
-  guestLogin: (username: string) => request<User>("/v1/auth/guest", { method: "POST", body: { username } }),
+  register: (username: string, password: string) =>
+    request<User>("/v1/auth/register", { method: "POST", body: { username, password } }),
+  login: (username: string, password: string) =>
+    request<User>("/v1/auth/login", { method: "POST", body: { username, password } }),
   logout: () => request<void>("/v1/auth/logout", { method: "POST", body: {} }),
   me: (signal?: AbortSignal) => request<User>("/v1/me", { signal }),
 
@@ -158,11 +161,25 @@ export const api = {
   declineInvite: (id: string) =>
     request<void>(`/v1/invites/${encodeURIComponent(id)}/decline`, { method: "POST", body: {} }),
 
-  tracks: (signal?: AbortSignal) => request<Track[]>("/v1/tracks", { signal }),
+  tracks: (opts: { page?: number; pageSize?: number; q?: string } = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    params.set("page", String(opts.page ?? 1));
+    params.set("pageSize", String(opts.pageSize ?? 20));
+    if (opts.q?.trim()) params.set("q", opts.q.trim());
+    return request<TrackPage>(`/v1/tracks?${params}`, { signal });
+  },
   track: (id: string, signal?: AbortSignal) => request<Track>(`/v1/tracks/${encodeURIComponent(id)}`, { signal }),
   createUpload: () => request<UploadTarget>("/v1/uploads", { method: "POST", body: {} }),
   createTrack: (title: string, objectKey: string, titleAuto = false) =>
     request<Track>("/v1/tracks", { method: "POST", body: { title, objectKey, titleAuto } }),
+};
+
+export type TrackPage = {
+  items: Track[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 };
 
 export const queryKeys = {
@@ -171,6 +188,6 @@ export const queryKeys = {
   groups: ["groups"] as const,
   group: (id: string) => ["groups", id] as const,
   invites: ["invites"] as const,
-  tracks: ["tracks"] as const,
-  track: (id: string) => ["tracks", id] as const,
+  tracks: (page: number, q: string) => ["tracks", page, q] as const,
+  track: (id: string) => ["tracks", "one", id] as const,
 };

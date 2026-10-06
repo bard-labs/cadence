@@ -69,22 +69,22 @@ function Shell({ me, children }: { me: User; children: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-xl pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-4 sm:px-6">
           <Link
             href="/"
-            className="rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/40"
+            className="inline-flex h-8 items-center rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/40"
             aria-label="Cadence home"
           >
             <Logo />
           </Link>
-          <nav aria-label="Main" className="ml-4 hidden items-center gap-1 sm:flex">
+          <nav aria-label="Main" className="ml-1 hidden h-8 items-center gap-1 sm:flex">
             {NAV.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
                 aria-current={isActive(item.href) ? "page" : undefined}
                 className={cn(
-                  "relative rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/40",
+                  "inline-flex h-8 items-center rounded-md px-3 text-sm leading-none text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/40",
                   isActive(item.href) && "text-foreground",
                 )}
               >
@@ -93,7 +93,7 @@ function Shell({ me, children }: { me: User; children: ReactNode }) {
               </Link>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex h-8 items-center gap-2">
             <ConnectionPill />
             <UserMenu me={me} />
           </div>
@@ -172,12 +172,12 @@ function UserMenu({ me }: { me: User }) {
     onSuccess: () => window.location.assign("/login"),
   });
   return (
-    <div className="flex items-center gap-1">
-      <span className="hidden items-center gap-2 rounded-full py-1 pr-2 pl-1 text-sm md:inline-flex">
+    <div className="flex h-8 items-center gap-1">
+      <span className="hidden h-8 items-center gap-2 rounded-full pr-2 pl-1 text-sm md:inline-flex">
         <Avatar userId={me.id} username={me.username} size="sm" />
-        <span className="max-w-32 truncate text-muted-foreground">@{me.username}</span>
+        <span className="max-w-32 truncate leading-none text-muted-foreground">@{me.username}</span>
       </span>
-      <span className="md:hidden">
+      <span className="inline-flex h-8 items-center md:hidden">
         <Avatar userId={me.id} username={me.username} size="sm" />
       </span>
       <Button

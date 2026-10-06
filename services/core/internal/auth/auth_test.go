@@ -33,6 +33,23 @@ func TestNormalizeUsername(t *testing.T) {
 	}
 }
 
+func TestPasswordRoundTrip(t *testing.T) {
+	if _, err := NormalizePassword("short"); err == nil {
+		t.Fatal("expected short password error")
+	}
+	pw, err := NormalizePassword("correct-horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := HashPassword(pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !CheckPassword(hash, pw) || CheckPassword(hash, "wrong-password") {
+		t.Fatal("bcrypt check failed")
+	}
+}
+
 func TestNewTokenHashMatches(t *testing.T) {
 	token, hash, err := NewToken()
 	if err != nil {

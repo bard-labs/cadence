@@ -62,8 +62,9 @@ func (a *API) Router() http.Handler {
 		v.Use(requestTimeout(15 * time.Second))
 		v.Use(httprate.Limit(300, time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP), httprate.WithLimitHandler(a.rateLimitExceeded)))
 
-		v.With(httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP), httprate.WithLimitHandler(a.rateLimitExceeded))).
-			Post("/auth/guest", a.guestLogin)
+		authLimit := httprate.Limit(20, time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP), httprate.WithLimitHandler(a.rateLimitExceeded))
+		v.With(authLimit).Post("/auth/register", a.register)
+		v.With(authLimit).Post("/auth/login", a.login)
 		v.Post("/auth/logout", a.logout)
 
 		v.Group(func(p chi.Router) {

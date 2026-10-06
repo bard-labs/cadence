@@ -11,11 +11,11 @@ type User struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func (s *Store) CreateUser(ctx context.Context, username string) (User, error) {
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO users (username) VALUES ($1) RETURNING id, username, created_at`,
-		username,
+		`INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at`,
+		username, passwordHash,
 	).Scan(&u.ID, &u.Username, &u.CreatedAt)
 	return u, mapErr(err)
 }
@@ -26,6 +26,16 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (User, erro
 		`SELECT id, username, created_at FROM users WHERE username = $1`, username,
 	).Scan(&u.ID, &u.Username, &u.CreatedAt)
 	return u, mapErr(err)
+}
+
+// UserAuthByUsername returns the public user and the bcrypt hash for login checks.
+func (s *Store) UserAuthByUsername(ctx context.Context, username string) (User, string, error) {
+	var u User
+	var hash string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, username, created_at, password_hash FROM users WHERE username = $1`, username,
+	).Scan(&u.ID, &u.Username, &u.CreatedAt, &hash)
+	return u, hash, mapErr(err)
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID string, tokenHash []byte, expiresAt time.Time) error {

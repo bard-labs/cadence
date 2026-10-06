@@ -1,10 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Music, Pause, Play, Upload } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Music, Pause, Play, Upload } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,18 +17,33 @@ import { coverUrl } from "@/lib/artwork";
 import { formatRelative, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+const PAGE_SIZE = 20;
+
 export function LibraryView() {
   const [filter, setFilter] = useState("");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setQ(filter.trim());
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [filter]);
+
   const tracks = useQuery({
-    queryKey: queryKeys.tracks,
-    queryFn: ({ signal }) => api.tracks(signal),
-    refetchInterval: (q) => (q.state.data?.some((t) => t.status === "processing") ? 3000 : false),
+    queryKey: queryKeys.tracks(page, q),
+    queryFn: ({ signal }) => api.tracks({ page, pageSize: PAGE_SIZE, q }, signal),
+    placeholderData: (prev) => prev,
+    refetchInterval: (query) => (query.state.data?.items.some((t) => t.status === "processing") ? 3000 : false),
   });
 
-  const q = filter.trim().toLowerCase();
-  const visible = (tracks.data ?? []).filter(
-    (t) => !q || t.title.toLowerCase().includes(q) || t.uploaderUsername.includes(q),
-  );
+  const data = tracks.data;
+  const items = data?.items ?? [];
+  const totalPages = data?.totalPages ?? 0;
+  const total = data?.total ?? 0;
+  const emptyLibrary = !tracks.isPending && !tracks.isError && total === 0 && !q;
 
   return (
     <div className="space-y-6">
@@ -43,11 +58,11 @@ export function LibraryView() {
         }
       />
 
-      {tracks.isPending ? (
+      {tracks.isPending && !data ? (
         <PageSpinner />
       ) : tracks.isError ? (
         <ErrorState error={tracks.error} onRetry={() => tracks.refetch()} />
-      ) : tracks.data.length === 0 ? (
+      ) : emptyLibrary ? (
         <EmptyState
           icon={Music}
           title="No tracks yet"
@@ -60,22 +75,55 @@ export function LibraryView() {
         />
       ) : (
         <>
-          <Input
-            type="search"
-            placeholder="Search by title or uploader"
-            aria-label="Search tracks"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="max-w-sm"
-          />
-          {visible.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">No tracks match “{filter}”.</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Input
+              type="search"
+              placeholder="Search by title, artist, or uploader"
+              aria-label="Search tracks"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="max-w-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              {total === 0 ? "No matches" : `${total} track${total === 1 ? "" : "s"}`}
+              {totalPages > 1 ? ` · page ${page} of ${totalPages}` : ""}
+            </p>
+          </div>
+
+          {items.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No tracks match “{q}”.</p>
           ) : (
             <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
-              {visible.map((t) => (
+              {items.map((t) => (
                 <TrackRow key={t.id} track={t} />
               ))}
             </ul>
+          )}
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || tracks.isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft data-icon="inline-start" />
+                Prev
+              </Button>
+              <span className="min-w-24 text-center text-sm tabular-nums text-muted-foreground">
+                {page} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || tracks.isFetching}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+                <ChevronRight data-icon="inline-end" />
+              </Button>
+            </div>
           )}
         </>
       )}
