@@ -63,7 +63,8 @@ func run(log *slog.Logger) error {
 	s3, err := storage.New(storage.Options{
 		Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicHost,
 		AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
-		Bucket: cfg.S3Bucket, UseSSL: cfg.S3UseSSL, PublicURL: cfg.S3PublicURL,
+		Bucket: cfg.S3Bucket, UseSSL: cfg.S3UseSSL, PublicUseSSL: cfg.S3PublicUseSSL,
+		PublicURL: cfg.S3PublicURL,
 	})
 	if err != nil {
 		return err

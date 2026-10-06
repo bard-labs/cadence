@@ -14,6 +14,7 @@ bin/
 .env.*
 !.env.example
 !apps/web/.env.local.example
+!deploy/.env.prod.example
 apps/web/.env.local
 
 # OS
@@ -42,3 +43,6 @@ deploy/data/
 *.log
 coverage/
 .turbo/
+
+# Production secrets on server only
+deploy/.env.prod

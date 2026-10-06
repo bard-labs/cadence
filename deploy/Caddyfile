@@ -1,0 +1,24 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	encode gzip zstd
+
+	# API + realtime
+	@api path /v1/* /ws /readyz /metrics
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	# MinIO (HLS + presigned browser uploads). Path-style: /cadence-tracks/...
+	handle /cadence-tracks/* {
+		reverse_proxy minio:9000
+	}
+
+	# Next.js web
+	handle {
+		reverse_proxy web:3000
+	}
+}

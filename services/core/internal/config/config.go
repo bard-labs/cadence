@@ -25,6 +25,7 @@ type Config struct {
 	S3SecretKey    string
 	S3Bucket       string
 	S3UseSSL       bool
+	S3PublicUseSSL bool
 	S3PublicURL    string
 	MaxUploadBytes int64
 	WorkerID       string
@@ -51,6 +52,9 @@ func Load() (Config, error) {
 		S3SecretKey:    env("CADENCE_S3_SECRET_KEY", "cadence-secret"),
 		S3Bucket:       env("CADENCE_S3_BUCKET", "cadence-tracks"),
 		S3UseSSL:       envBool("CADENCE_S3_USE_SSL", false),
+		// Defaults to the internal flag so local/dev keeps one switch; production
+		// sets CADENCE_S3_PUBLIC_USE_SSL=true while keeping internal MinIO on HTTP.
+		S3PublicUseSSL: envBool("CADENCE_S3_PUBLIC_USE_SSL", envBool("CADENCE_S3_USE_SSL", false)),
 		S3PublicURL:    strings.TrimSuffix(env("CADENCE_S3_PUBLIC_URL", "http://localhost:9000/cadence-tracks"), "/"),
 		MaxUploadBytes: envInt("CADENCE_MAX_UPLOAD_MB", 50) * 1024 * 1024,
 		WorkerID:       env("CADENCE_WORKER_ID", hostnameOr("worker-1")),

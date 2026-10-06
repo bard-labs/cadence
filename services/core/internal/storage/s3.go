@@ -28,25 +28,26 @@ type Options struct {
 	AccessKey      string
 	SecretKey      string
 	Bucket         string
-	UseSSL         bool
+	UseSSL         bool // server → MinIO (usually plain HTTP inside Docker)
+	PublicUseSSL   bool // browser → public host (HTTPS behind Cloudflare/Caddy)
 	PublicURL      string
 }
 
 // New builds two clients: one for server-to-storage traffic and one whose host
 // matches what browsers can reach, because presigned signatures cover the host.
 func New(o Options) (*S3, error) {
-	mk := func(endpoint string) (*minio.Client, error) {
+	mk := func(endpoint string, secure bool) (*minio.Client, error) {
 		return minio.New(endpoint, &minio.Options{
 			Creds:  credentials.NewStaticV4(o.AccessKey, o.SecretKey, ""),
-			Secure: o.UseSSL,
+			Secure: secure,
 			Region: region,
 		})
 	}
-	client, err := mk(o.Endpoint)
+	client, err := mk(o.Endpoint, o.UseSSL)
 	if err != nil {
 		return nil, err
 	}
-	presigner, err := mk(o.PublicEndpoint)
+	presigner, err := mk(o.PublicEndpoint, o.PublicUseSSL)
 	if err != nil {
 		return nil, err
 	}
