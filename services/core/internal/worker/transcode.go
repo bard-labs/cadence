@@ -2,107 +2,188 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bardiamardan/bardlabs-cadence/services/core/internal/storage"
 	"github.com/bardiamardan/bardlabs-cadence/services/core/internal/store"
-	"github.com/minio/minio-go/v7"
 )
 
+// Only real audio containers may be demuxed. Without this, a crafted "audio"
+// file that is actually an HLS or concat playlist could make ffmpeg read local
+// files or internal URLs.
+const formatWhitelist = "mp3,wav,flac,ogg,mov,matroska,aac,aiff,w64"
+
+const maxDuration = 2 * time.Hour
+
+// PermanentError marks failures that retrying cannot fix, such as an invalid file.
+type PermanentError struct{ Reason string }
+
+func (e *PermanentError) Error() string { return e.Reason }
+
 type Transcoder struct {
-	store  *store.Store
-	s3     *storage.S3
-	ffmpeg string
+	store   *store.Store
+	s3      *storage.S3
+	ffmpeg  string
+	ffprobe string
 }
 
-func NewTranscoder(st *store.Store, s3 *storage.S3, ffmpeg string) *Transcoder {
-	return &Transcoder{store: st, s3: s3, ffmpeg: ffmpeg}
+func NewTranscoder(st *store.Store, s3 *storage.S3, ffmpeg, ffprobe string) *Transcoder {
+	return &Transcoder{store: st, s3: s3, ffmpeg: ffmpeg, ffprobe: ffprobe}
 }
 
-func (t *Transcoder) RunJob(ctx context.Context, job *store.Job) error {
+func (t *Transcoder) Run(ctx context.Context, job *store.Job) (trackID string, err error) {
 	if job.Kind != "transcode_hls" {
-		return fmt.Errorf("unknown job kind %s", job.Kind)
+		return "", &PermanentError{Reason: "unknown job kind " + job.Kind}
 	}
-	trackID, _ := job.Payload["trackId"].(string)
-	if trackID == "" {
-		return fmt.Errorf("missing trackId")
+	var payload struct {
+		TrackID string `json:"trackId"`
 	}
+	if err := json.Unmarshal(job.Payload, &payload); err != nil || payload.TrackID == "" {
+		return "", &PermanentError{Reason: "invalid job payload"}
+	}
+	trackID = payload.TrackID
+
 	originalKey, err := t.store.TrackOriginalKey(ctx, trackID)
+	if errors.Is(err, store.ErrNotFound) {
+		return trackID, &PermanentError{Reason: "track was deleted"}
+	}
 	if err != nil {
-		return err
+		return trackID, err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "cadence-hls-*")
+	dir, err := os.MkdirTemp("", "cadence-hls-*")
 	if err != nil {
-		return err
+		return trackID, err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(dir)
 
-	inputPath := filepath.Join(tmpDir, "input")
-	if err := t.downloadObject(ctx, originalKey, inputPath); err != nil {
-		_ = t.store.MarkTrackFailed(ctx, trackID)
-		return err
+	input := filepath.Join(dir, "input")
+	if err := t.s3.Download(ctx, originalKey, input); err != nil {
+		return trackID, fmt.Errorf("download original: %w", err)
 	}
 
-	outDir := filepath.Join(tmpDir, "hls")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return err
+	duration, err := t.probe(ctx, input)
+	if err != nil {
+		return trackID, err
 	}
-	manifest := filepath.Join(outDir, "index.m3u8")
+
+	out := filepath.Join(dir, "hls")
+	if err := os.Mkdir(out, 0o755); err != nil {
+		return trackID, err
+	}
 	cmd := exec.CommandContext(ctx, t.ffmpeg,
-		"-y", "-i", inputPath,
-		"-codec:a", "aac", "-b:a", "128k",
-		"-f", "hls", "-hls_time", "4", "-hls_playlist_type", "vod",
-		manifest,
+		"-hide_banner", "-nostdin", "-loglevel", "error",
+		"-protocol_whitelist", "file",
+		"-format_whitelist", formatWhitelist,
+		"-i", input,
+		"-map", "0:a:0", "-vn",
+		"-c:a", "aac", "-b:a", "160k", "-ac", "2", "-ar", "44100",
+		"-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
+		"-hls_segment_filename", filepath.Join(out, "seg_%04d.ts"),
+		filepath.Join(out, "index.m3u8"),
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = t.store.MarkTrackFailed(ctx, trackID)
-		return fmt.Errorf("ffmpeg: %v: %s", err, string(out))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			return trackID, ctx.Err()
+		}
+		return trackID, &PermanentError{Reason: "could not transcode audio: " + firstLine(string(output))}
 	}
 
-	prefix := fmt.Sprintf("hls/%s", trackID)
-	if err := t.uploadDir(ctx, outDir, prefix); err != nil {
-		_ = t.store.MarkTrackFailed(ctx, trackID)
-		return err
+	prefix := "hls/" + trackID
+	if err := t.uploadHLS(ctx, out, prefix); err != nil {
+		return trackID, fmt.Errorf("upload hls: %w", err)
 	}
-
-	manifestKey := prefix + "/index.m3u8"
-	durationMs := 0
-	if err := t.store.SetTrackReady(ctx, trackID, manifestKey, durationMs); err != nil {
-		return err
-	}
-	return nil
+	return trackID, t.store.SetTrackReady(ctx, trackID, prefix+"/index.m3u8", int(duration.Milliseconds()))
 }
 
-func (t *Transcoder) downloadObject(ctx context.Context, key, dest string) error {
-	return t.s3.Client().FGetObject(ctx, t.s3.Bucket(), key, dest, minio.GetObjectOptions{})
+func (t *Transcoder) probe(ctx context.Context, input string) (time.Duration, error) {
+	cmd := exec.CommandContext(ctx, t.ffprobe,
+		"-v", "error",
+		"-protocol_whitelist", "file",
+		"-format_whitelist", formatWhitelist,
+		"-show_entries", "format=duration:stream=codec_type",
+		"-of", "json", input,
+	)
+	raw, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+		return 0, &PermanentError{Reason: "this file isn't a supported audio format"}
+	}
+	var res struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return 0, &PermanentError{Reason: "could not read audio metadata"}
+	}
+	hasAudio := false
+	for _, s := range res.Streams {
+		if s.CodecType == "audio" {
+			hasAudio = true
+		}
+	}
+	if !hasAudio {
+		return 0, &PermanentError{Reason: "the file has no audio stream"}
+	}
+	secs, err := strconv.ParseFloat(res.Format.Duration, 64)
+	if err != nil || secs <= 0 {
+		return 0, &PermanentError{Reason: "could not determine track length"}
+	}
+	d := time.Duration(secs * float64(time.Second))
+	if d > maxDuration {
+		return 0, &PermanentError{Reason: "tracks can be at most 2 hours long"}
+	}
+	return d, nil
 }
 
-func (t *Transcoder) uploadDir(ctx context.Context, dir, prefix string) error {
+// uploadHLS uploads segments before the playlist, so a visible playlist always
+// points at segments that exist.
+func (t *Transcoder) uploadHLS(ctx context.Context, dir, prefix string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
+	var playlist string
 	for _, e := range entries {
+		name := e.Name()
 		if e.IsDir() {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		objectKey := prefix + "/" + e.Name()
-		ct := "application/octet-stream"
-		if strings.HasSuffix(e.Name(), ".m3u8") {
-			ct = "application/vnd.apple.mpegurl"
-		} else if strings.HasSuffix(e.Name(), ".ts") {
-			ct = "video/mp2t"
+		if strings.HasSuffix(name, ".m3u8") {
+			playlist = name
+			continue
 		}
-		_, err := t.s3.Client().FPutObject(ctx, t.s3.Bucket(), objectKey, path, minio.PutObjectOptions{ContentType: ct})
-		if err != nil {
+		if err := t.s3.Upload(ctx, prefix+"/"+name, filepath.Join(dir, name), "video/mp2t", "public, max-age=31536000, immutable"); err != nil {
 			return err
 		}
 	}
-	return nil
+	if playlist == "" {
+		return errors.New("ffmpeg produced no playlist")
+	}
+	return t.s3.Upload(ctx, prefix+"/"+playlist, filepath.Join(dir, playlist), "application/vnd.apple.mpegurl", "public, max-age=300")
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
 }

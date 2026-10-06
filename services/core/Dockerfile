@@ -8,17 +8,16 @@ RUN CGO_ENABLED=0 go build -o /bin/api ./cmd/api
 RUN CGO_ENABLED=0 go build -o /bin/worker ./cmd/worker
 
 FROM alpine:3.21 AS api
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 cadence
 WORKDIR /app
 COPY --from=build /bin/api /app/api
-COPY db/migrations /app/db/migrations
-WORKDIR /app
+USER cadence
 EXPOSE 8080
 ENTRYPOINT ["/app/api"]
 
 FROM alpine:3.21 AS worker
-RUN apk add --no-cache ca-certificates ffmpeg
+RUN apk add --no-cache ca-certificates ffmpeg && adduser -D -u 10001 cadence
 WORKDIR /app
 COPY --from=build /bin/worker /app/worker
-EXPOSE 8081
+USER cadence
 ENTRYPOINT ["/app/worker"]

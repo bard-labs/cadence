@@ -1,56 +1,113 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
+	Env            string
 	HTTPAddr       string
-	SessionSecret  string
-	CORSOrigin     string
+	TrustProxy     bool
+	SessionTTL     time.Duration
+	CookieSecure   bool
+	CookieDomain   string
+	AllowedOrigin  string
 	DatabaseURL    string
 	RedisURL       string
 	S3Endpoint     string
+	S3PublicHost   string
 	S3AccessKey    string
 	S3SecretKey    string
 	S3Bucket       string
 	S3UseSSL       bool
 	S3PublicURL    string
+	MaxUploadBytes int64
 	WorkerID       string
 	FFmpegPath     string
+	FFprobePath    string
 }
 
-func Load() Config {
-	useSSL := strings.EqualFold(os.Getenv("CADENCE_S3_USE_SSL"), "true")
-	workerID := os.Getenv("CADENCE_WORKER_ID")
-	if workerID == "" {
-		workerID = "worker-1"
+func (c Config) IsProduction() bool { return c.Env == "production" }
+
+func Load() (Config, error) {
+	cfg := Config{
+		Env:            env("CADENCE_ENV", "development"),
+		HTTPAddr:       env("CADENCE_HTTP_ADDR", ":8080"),
+		TrustProxy:     envBool("CADENCE_TRUST_PROXY", false),
+		SessionTTL:     30 * 24 * time.Hour,
+		CookieSecure:   envBool("CADENCE_COOKIE_SECURE", false),
+		CookieDomain:   os.Getenv("CADENCE_COOKIE_DOMAIN"),
+		AllowedOrigin:  strings.TrimSuffix(env("CADENCE_CORS_ORIGIN", "http://localhost:3000"), "/"),
+		DatabaseURL:    env("CADENCE_DATABASE_URL", "postgres://cadence:cadence@localhost:5433/cadence?sslmode=disable"),
+		RedisURL:       env("CADENCE_REDIS_URL", "redis://localhost:6379/0"),
+		S3Endpoint:     env("CADENCE_S3_ENDPOINT", "localhost:9000"),
+		S3PublicHost:   os.Getenv("CADENCE_S3_PUBLIC_ENDPOINT"),
+		S3AccessKey:    env("CADENCE_S3_ACCESS_KEY", "cadence"),
+		S3SecretKey:    env("CADENCE_S3_SECRET_KEY", "cadence-secret"),
+		S3Bucket:       env("CADENCE_S3_BUCKET", "cadence-tracks"),
+		S3UseSSL:       envBool("CADENCE_S3_USE_SSL", false),
+		S3PublicURL:    strings.TrimSuffix(env("CADENCE_S3_PUBLIC_URL", "http://localhost:9000/cadence-tracks"), "/"),
+		MaxUploadBytes: envInt("CADENCE_MAX_UPLOAD_MB", 50) * 1024 * 1024,
+		WorkerID:       env("CADENCE_WORKER_ID", hostnameOr("worker-1")),
+		FFmpegPath:     env("CADENCE_FFMPEG_PATH", "ffmpeg"),
+		FFprobePath:    env("CADENCE_FFPROBE_PATH", "ffprobe"),
 	}
-	ffmpeg := os.Getenv("CADENCE_FFMPEG_PATH")
-	if ffmpeg == "" {
-		ffmpeg = "ffmpeg"
+	if cfg.S3PublicHost == "" {
+		cfg.S3PublicHost = cfg.S3Endpoint
 	}
-	return Config{
-		HTTPAddr:      env("CADENCE_HTTP_ADDR", ":8080"),
-		SessionSecret: env("CADENCE_SESSION_SECRET", "dev-secret-change-me-32-chars-min!!"),
-		CORSOrigin:    env("CADENCE_CORS_ORIGIN", "http://localhost:3000"),
-		DatabaseURL:   env("CADENCE_DATABASE_URL", "postgres://cadence:cadence@localhost:5433/cadence?sslmode=disable"),
-		RedisURL:      env("CADENCE_REDIS_URL", "redis://localhost:6379/0"),
-		S3Endpoint:    env("CADENCE_S3_ENDPOINT", "localhost:9000"),
-		S3AccessKey:   env("CADENCE_S3_ACCESS_KEY", "cadence"),
-		S3SecretKey:   env("CADENCE_S3_SECRET_KEY", "cadence-secret"),
-		S3Bucket:      env("CADENCE_S3_BUCKET", "cadence-tracks"),
-		S3UseSSL:      useSSL,
-		S3PublicURL:   env("CADENCE_S3_PUBLIC_URL", "http://localhost:9000/cadence-tracks"),
-		WorkerID:      workerID,
-		FFmpegPath:    ffmpeg,
+	return cfg, cfg.validate()
+}
+
+func (c Config) validate() error {
+	var errs []error
+	if c.Env != "development" && c.Env != "production" {
+		errs = append(errs, fmt.Errorf("CADENCE_ENV must be development or production, got %q", c.Env))
 	}
+	if c.IsProduction() {
+		if !c.CookieSecure {
+			errs = append(errs, errors.New("CADENCE_COOKIE_SECURE must be true in production"))
+		}
+		if !strings.HasPrefix(c.AllowedOrigin, "https://") {
+			errs = append(errs, errors.New("CADENCE_CORS_ORIGIN must be https in production"))
+		}
+	}
+	if c.MaxUploadBytes <= 0 {
+		errs = append(errs, errors.New("CADENCE_MAX_UPLOAD_MB must be positive"))
+	}
+	return errors.Join(errs...)
 }
 
 func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	v, err := strconv.ParseBool(os.Getenv(key))
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func envInt(key string, fallback int64) int64 {
+	v, err := strconv.ParseInt(os.Getenv(key), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func hostnameOr(fallback string) string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
 	}
 	return fallback
 }
