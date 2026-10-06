@@ -6,8 +6,8 @@
 :80 {
 	encode gzip zstd
 
-	# API + realtime
-	@api path /v1/* /ws /readyz /metrics
+	# API + realtime (/metrics stays internal — scrape api:8080 from the host network)
+	@api path /v1/* /ws /readyz
 	handle @api {
 		reverse_proxy api:8080
 	}

@@ -1,4 +1,4 @@
-// Tracks don't carry cover art yet, so each one gets a stable Unsplash image.
+// Fallback art when a track has no embedded cover (worker extracts covers when present).
 const COVERS = [
   "photo-1493225457124-a3eb161ffa5f",
   "photo-1511379938547-c1f69419868d",

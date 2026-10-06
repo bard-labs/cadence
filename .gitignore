@@ -29,10 +29,6 @@ CLAUDE.md
 graphify-out/
 *.agent.*
 
-# Docs (local learning notes for now)
-README.md
-docs/
-
 # Go
 vendor/
 

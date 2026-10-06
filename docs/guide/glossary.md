@@ -1,0 +1,21 @@
+# Glossary
+
+- **HLS:** HTTP Live Streaming. Audio cut into small `.ts` segments plus an `.m3u8` playlist, served over plain HTTP.
+- **Host-authoritative:** only the host's play, pause, and seek change a room. Listeners follow.
+- **Room:** one per user, keyed by user id. It's "what this person is playing right now".
+- **Snapshot:** the full room state (`seq`, `state`, `listeners`, `online`), as opposed to incremental commands.
+- **seq:** a per-room counter that only goes up. Clients ignore snapshots older than the one they have.
+- **capturedAt:** the server time (ms) when the host's position was measured.
+- **RTT:** round-trip time. Used to estimate clock offset; the lowest-RTT sample is the most accurate.
+- **Clock offset:** `serverTime − localTime`, used to compute `serverNow()` in the browser.
+- **Drift:** listener position minus where the host should be right now.
+- **Nudge:** speeding up or slowing down playback by up to 3% to fix small drift without an audible jump.
+- **Presence:** whether someone has at least one open socket (a Redis hash with a TTL).
+- **SKIP LOCKED:** a Postgres row lock that skips rows already locked by another worker. Used to build a job queue without a separate broker.
+- **Lease:** how long a worker may hold a job before another worker reclaims it.
+- **Presigned POST policy:** a signed, time-limited permission for the browser to upload one object straight to S3/MinIO, with size and type limits.
+- **Pub/sub:** a Redis channel that every API instance subscribes to, so room updates reach sockets on any instance.
+- **Proxy (Next 16):** the new name for Next.js middleware (`src/proxy.ts`). It runs before every page request.
+- **Route group:** a folder in `app/` named in parentheses, like `(app)`, that shares a layout without adding a URL segment.
+- **CSP:** Content Security Policy. A response header that tells the browser which origins scripts, styles, connections, and media may come from.
+- **CSRF:** cross-site request forgery. Another site tricking your browser into making authenticated requests.
