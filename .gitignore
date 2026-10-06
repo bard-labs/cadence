@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+.next/
+out/
+dist/
+*.exe
+bin/
+
+# Env
+.env
+.env.*
+!.env.example
+apps/web/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / agents (never commit)
+.cursor/
+.claude/
+AGENTS.md
+CLAUDE.md
+graphify-out/
+*.agent.*
+
+# Docs (local learning notes for now)
+README.md
+docs/
+
+# Go
+vendor/
+
+# Data
+deploy/data/
+
+# Misc
+*.log
+coverage/
+.turbo/

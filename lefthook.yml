@@ -1,0 +1,14 @@
+commit-msg:
+  commands:
+    block-agent-trailers:
+      run: |
+        if grep -qiE 'co-authored-by|cursor' {1}; then
+          echo "Commit message must not include Co-authored-by or Cursor attribution."
+          exit 1
+        fi
+
+pre-commit:
+  commands:
+    biome:
+      glob: "*.{js,ts,tsx,json}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}

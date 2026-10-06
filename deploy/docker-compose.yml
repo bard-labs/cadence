@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cadence
+      POSTGRES_PASSWORD: cadence
+      POSTGRES_DB: cadence
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cadence"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: cadence
+      MINIO_ROOT_PASSWORD: cadence-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 cadence cadence-secret;
+      mc mb -p local/cadence-tracks || true;
+      mc anonymous set download local/cadence-tracks;
+      exit 0;
+      "
+
+  api:
+    build:
+      context: ../services/core
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      CADENCE_HTTP_ADDR: ":8080"
+      CADENCE_SESSION_SECRET: dev-secret-change-me-32-chars-min!!
+      CADENCE_CORS_ORIGIN: http://localhost:3000
+      CADENCE_DATABASE_URL: postgres://cadence:cadence@postgres:5432/cadence?sslmode=disable
+      CADENCE_REDIS_URL: redis://redis:6379/0
+      CADENCE_S3_ENDPOINT: minio:9000
+      CADENCE_S3_ACCESS_KEY: cadence
+      CADENCE_S3_SECRET_KEY: cadence-secret
+      CADENCE_S3_BUCKET: cadence-tracks
+      CADENCE_S3_USE_SSL: "false"
+      CADENCE_S3_PUBLIC_URL: http://localhost:9000/cadence-tracks
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ../services/core
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      CADENCE_DATABASE_URL: postgres://cadence:cadence@postgres:5432/cadence?sslmode=disable
+      CADENCE_S3_ENDPOINT: minio:9000
+      CADENCE_S3_ACCESS_KEY: cadence
+      CADENCE_S3_SECRET_KEY: cadence-secret
+      CADENCE_S3_BUCKET: cadence-tracks
+      CADENCE_S3_USE_SSL: "false"
+      CADENCE_S3_PUBLIC_URL: http://localhost:9000/cadence-tracks
+      CADENCE_WORKER_ID: worker-docker-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  miniodata:

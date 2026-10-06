@@ -1,0 +1,20 @@
+{
+  "name": "bardlabs-cadence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BardLabs Cadence — listen along music platform",
+  "scripts": {
+    "dev": "pnpm --filter @bardlabs/cadence-web dev",
+    "build": "pnpm --filter @bardlabs/cadence-web build",
+    "lint": "pnpm -r lint",
+    "format": "biome format --write .",
+    "check": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
+    "lefthook": "^2.1.17"
+  },
+  "packageManager": "pnpm@11.7.0"
+}
