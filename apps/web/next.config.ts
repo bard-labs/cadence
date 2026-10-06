@@ -11,7 +11,7 @@ const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://images.unsplash.com",
+  `img-src 'self' data: blob: https://images.unsplash.com ${origin(mediaUrl)}`,
   "font-src 'self'",
   `connect-src 'self' ${origin(apiUrl)} ${origin(wsUrl)} ${origin(mediaUrl)}${isDev ? " ws://localhost:*" : ""}`,
   `media-src 'self' blob: ${origin(mediaUrl)}`,

@@ -2,13 +2,13 @@
 
 import type { RoomSnapshot } from "@bardlabs/cadence-protocol";
 import { useQuery } from "@tanstack/react-query";
-import { Headphones, Library, LogOut, Radio, Upload } from "lucide-react";
+import { Headphones, Library, LogOut, Radio, SlidersHorizontal, Upload, X } from "lucide-react";
 import Link from "next/link";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { SeekBar } from "@/components/ui/seek-bar";
 import { Vinyl } from "@/features/listen/vinyl";
-import { useLive } from "@/features/live/live-provider";
+import { useFriends, useLive } from "@/features/live/live-provider";
 import { useLivePosition } from "@/features/live/use-live-position";
 import { usePlayer } from "@/features/player/player-store";
 import { api, type Friend, queryKeys } from "@/lib/api";
@@ -20,7 +20,8 @@ import { cn } from "@/lib/utils";
 type Person = { id: string; username: string; isMe: boolean; friend?: Friend };
 
 export function PersonStage({ person }: { person: Person }) {
-  const { engine } = useLive();
+  const { engine, me } = useLive();
+  const friends = useFriends();
   const player = usePlayer();
   const ownRoom = useRoom(person.id);
 
@@ -41,11 +42,20 @@ export function PersonStage({ person }: { person: Person }) {
   const online = person.isMe || Boolean(room?.online);
   const playing = Boolean(state && !state.paused && (followingId ? followedRoom?.online : online));
   const listeningHere = !person.isMe && player.mode === "listener" && player.hostId === person.id;
+  const controllers = room?.controllers ?? [];
+  const myControllers = ownRoom?.controllers ?? [];
+  const iControl = listeningHere && controllers.includes(me.id);
+  const names = new Map((friends.data ?? []).map((f) => [f.userId, f.username]));
   const durationMs = track.data?.durationMs ?? 0;
 
   return (
     <div className="flex flex-col items-center gap-8 md:flex-row md:items-center md:justify-center md:gap-14">
-      <Vinyl trackId={state?.trackId ?? null} hue={userHue(person.id)} spinning={playing} />
+      <Vinyl
+        trackId={state?.trackId ?? null}
+        coverUrl={track.data?.coverUrl}
+        hue={userHue(person.id)}
+        spinning={playing}
+      />
 
       <div className="flex w-full max-w-md flex-col items-center gap-5 text-center md:items-start md:text-left">
         <StatusChip
@@ -61,7 +71,7 @@ export function PersonStage({ person }: { person: Person }) {
             {state ? (track.data?.title ?? (track.isError ? "Unknown track" : "Loading…")) : "Nothing playing"}
           </h2>
           <p className="truncate text-sm text-muted-foreground">
-            {state && track.data ? `Uploaded by @${track.data.uploaderUsername}` : emptyLine(person, online)}
+            {state && track.data ? trackCredit(track.data) : emptyLine(person, online)}
           </p>
         </div>
 
@@ -89,10 +99,23 @@ export function PersonStage({ person }: { person: Person }) {
               </Link>
             </>
           ) : listeningHere ? (
-            <Button variant="outline" size="lg" className="h-10 px-4" onClick={() => engine?.stop()}>
-              <LogOut data-icon="inline-start" />
-              Stop listening
-            </Button>
+            <>
+              {iControl ? (
+                <Button variant="outline" size="lg" className="h-10 px-4" onClick={() => engine?.releaseControl()}>
+                  <SlidersHorizontal data-icon="inline-start" />
+                  Release control
+                </Button>
+              ) : (
+                <Button size="lg" className="h-10 px-4" onClick={() => engine?.requestControl()}>
+                  <SlidersHorizontal data-icon="inline-start" />
+                  Take control
+                </Button>
+              )}
+              <Button variant="outline" size="lg" className="h-10 px-4" onClick={() => engine?.stop()}>
+                <LogOut data-icon="inline-start" />
+                Stop listening
+              </Button>
+            </>
           ) : (
             <Button
               size="lg"
@@ -106,6 +129,20 @@ export function PersonStage({ person }: { person: Person }) {
           )}
         </div>
 
+        {person.isMe && myControllers.length > 0 && (
+          <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+            {myControllers.map((id) => (
+              <li key={id} className="flex items-center gap-2">
+                <span className="truncate">@{names.get(id) ?? "friend"} has control</span>
+                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => engine?.revokeControl(id)}>
+                  <X data-icon="inline-start" />
+                  Revoke
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {person.friend && person.friend.groups.length > 0 && (
           <p className="text-xs text-muted-foreground">
             In {person.friend.groups.slice(0, 3).join(", ")}
@@ -115,6 +152,17 @@ export function PersonStage({ person }: { person: Person }) {
       </div>
     </div>
   );
+}
+
+function trackCredit(track: {
+  artist?: string | null;
+  album?: string | null;
+  year?: number | null;
+  uploaderUsername: string;
+}): string {
+  const bits = [track.artist, track.album, track.year].filter(Boolean);
+  if (bits.length > 0) return bits.join(" · ");
+  return `Uploaded by @${track.uploaderUsername}`;
 }
 
 function emptyLine(person: Person, online: boolean): string {

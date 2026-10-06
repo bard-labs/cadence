@@ -120,6 +120,14 @@ func (c *client) handle(ctx context.Context, m inbound) {
 		c.handleState(ctx, m)
 	case "stop":
 		c.handleStop(ctx)
+	case "control_request":
+		c.handleControlRequest(ctx, m.RoomID)
+	case "control_respond":
+		c.handleControlRespond(ctx, m.UserID, m.Accept)
+	case "control_revoke":
+		c.handleControlRevoke(ctx, m.UserID)
+	case "control_release":
+		c.handleControlRelease(ctx, m.RoomID)
 	case "drift":
 		driftHistogram.Observe(math.Min(math.Abs(m.DriftMs), 60_000))
 	default:
@@ -153,14 +161,18 @@ func (c *client) onDisconnect() {
 	remaining, _ := rdb.HLen(ctx, presenceKey(c.userID)).Result()
 	if remaining == 0 {
 		// The host's last tab closed: freeze the room at the current position
-		// so listeners pause instead of playing on without a host.
+		// so listeners pause instead of playing on without a host, and drop
+		// shared control because nobody is left to supervise it.
 		if st, ok := c.loadOwnState(ctx); ok && !st.Paused {
 			now := time.Now().UnixMilli()
 			st.PositionMs += int64(float64(now-st.CapturedAt) * st.Rate)
 			st.CapturedAt = now
 			st.Paused = true
-			c.saveState(ctx, st)
+			st.By = c.userID
+			c.saveState(ctx, c.userID, st)
 		}
+		c.clearControllers(ctx, c.userID)
+		c.releaseControlling(ctx)
 	}
 	c.hub.publishRoom(ctx, c.userID)
 }
@@ -249,6 +261,7 @@ func (c *client) leave(ctx context.Context) {
 	if err := c.hub.rdb.SRem(ctx, listenersKey(room), c.userID).Err(); err != nil {
 		c.hub.log.Warn("listen remove", "room", room, "err", err)
 	}
+	c.dropControl(ctx, room)
 	c.hub.publishRoom(ctx, room)
 }
 
@@ -257,7 +270,22 @@ func (c *client) handleState(ctx context.Context, m inbound) {
 		c.sendError("invalid_state", "Invalid playback state.", "")
 		return
 	}
-	c.leave(ctx)
+	room := c.userID
+	if m.RoomID != "" && m.RoomID != c.userID {
+		if _, err := uuid.Parse(m.RoomID); err != nil {
+			c.sendError("invalid_state", "Invalid playback state.", "")
+			return
+		}
+		member, err := c.hub.rdb.SIsMember(ctx, controllersKey(m.RoomID), c.userID).Result()
+		if err != nil || !member {
+			c.sendError("not_controller", "You don't have control of this room.", m.RoomID)
+			return
+		}
+		room = m.RoomID
+	} else {
+		// Publishing your own room means you stopped listening along.
+		c.leave(ctx)
+	}
 
 	if m.TrackID != c.lastTrackID {
 		t, err := c.hub.store.TrackByID(ctx, m.TrackID)
@@ -283,14 +311,16 @@ func (c *client) handleState(ctx context.Context, m inbound) {
 		CapturedAt: captured,
 		Paused:     m.Paused,
 		Rate:       r,
+		By:         c.userID,
 	}
-	c.saveState(ctx, st)
-	c.hub.publishRoom(ctx, c.userID)
-	c.persist(ctx, st)
+	c.saveState(ctx, room, st)
+	c.hub.publishRoom(ctx, room)
+	c.persist(ctx, room, st)
 }
 
 func (c *client) handleStop(ctx context.Context) {
 	st, hadState := c.loadOwnState(ctx)
+	c.clearControllers(ctx, c.userID)
 	pipe := c.hub.rdb.TxPipeline()
 	pipe.Del(ctx, stateKey(c.userID))
 	pipe.Incr(ctx, seqKey(c.userID))
@@ -300,7 +330,7 @@ func (c *client) handleStop(ctx context.Context) {
 	c.hub.publishRoom(ctx, c.userID)
 	if hadState {
 		st.Paused = true
-		c.persist(ctx, st)
+		c.persist(ctx, c.userID, st)
 	}
 }
 
@@ -319,33 +349,216 @@ func (c *client) loadOwnState(ctx context.Context) (RoomState, bool) {
 	return st, true
 }
 
-func (c *client) saveState(ctx context.Context, st RoomState) {
+func (c *client) saveState(ctx context.Context, room string, st RoomState) {
 	raw, _ := json.Marshal(st)
 	pipe := c.hub.rdb.TxPipeline()
-	pipe.Set(ctx, stateKey(c.userID), raw, stateTTL)
-	pipe.Incr(ctx, seqKey(c.userID))
-	pipe.Expire(ctx, seqKey(c.userID), 24*time.Hour)
-	pipe.Expire(ctx, listenersKey(c.userID), stateTTL)
+	pipe.Set(ctx, stateKey(room), raw, stateTTL)
+	pipe.Incr(ctx, seqKey(room))
+	pipe.Expire(ctx, seqKey(room), 24*time.Hour)
+	pipe.Expire(ctx, listenersKey(room), stateTTL)
+	pipe.Expire(ctx, controllersKey(room), stateTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
-		c.hub.log.Error("save state", "user", c.userID, "err", err)
+		c.hub.log.Error("save state", "room", room, "err", err)
 	}
 }
 
-// persist records "last played" in Postgres only when the track or play/pause
-// changes, not on every heartbeat.
-func (c *client) persist(ctx context.Context, st RoomState) {
-	key := st.TrackID
+// persist records "last played" for the room's owner only when the track or
+// play/pause changes, not on every heartbeat. A controller updates the host's
+// row, because the room is the host's.
+func (c *client) persist(ctx context.Context, room string, st RoomState) {
+	key := room + ":" + st.TrackID
 	if st.Paused {
 		key += ":paused"
 	}
 	if key == c.persistedKey {
 		return
 	}
-	if err := c.hub.store.UpsertListening(ctx, c.userID, st.TrackID, st.PositionMs, st.Paused); err != nil {
-		c.hub.log.Warn("persist listening", "user", c.userID, "err", err)
+	if err := c.hub.store.UpsertListening(ctx, room, st.TrackID, st.PositionMs, st.Paused); err != nil {
+		c.hub.log.Warn("persist listening", "room", room, "err", err)
 		return
 	}
 	c.persistedKey = key
+}
+
+func (c *client) handleControlRequest(ctx context.Context, room string) {
+	if _, err := uuid.Parse(room); err != nil || room == c.userID {
+		c.sendError("control_invalid", "You can't request control of your own room.", room)
+		return
+	}
+	if c.listeningTo != room {
+		c.sendError("control_invalid", "Listen along first, then ask for control.", room)
+		return
+	}
+	ok, err := c.hub.store.SharesGroup(ctx, c.userID, room)
+	if err != nil {
+		c.hub.log.Error("control request authz", "user", c.userID, "err", err)
+		c.sendError("internal", "Could not request control right now.", room)
+		return
+	}
+	if !ok {
+		c.sendError("control_invalid", "You can only take control with people in your groups.", room)
+		return
+	}
+	member, err := c.hub.rdb.SIsMember(ctx, controllersKey(room), c.userID).Result()
+	if err != nil {
+		c.sendError("internal", "Could not request control right now.", room)
+		return
+	}
+	if member {
+		c.sendError("control_invalid", "You already have control.", room)
+		return
+	}
+	n, err := c.hub.rdb.SCard(ctx, controllersKey(room)).Result()
+	if err != nil {
+		c.sendError("internal", "Could not request control right now.", room)
+		return
+	}
+	if n >= maxControllers {
+		c.sendError("control_invalid", "Too many people already have control.", room)
+		return
+	}
+	fresh, err := c.hub.rdb.SetNX(ctx, controlReqKey(room, c.userID), c.username, controlRequestTTL).Result()
+	if err != nil {
+		c.sendError("internal", "Could not request control right now.", room)
+		return
+	}
+	if !fresh {
+		c.sendError("control_pending", "You already asked. Waiting for them to answer.", room)
+		return
+	}
+	c.hub.publishUser(ctx, room, controlRequestMessage{
+		Type: "control_request", RoomID: room, From: c.userID, Username: c.username,
+	})
+}
+
+func (c *client) handleControlRespond(ctx context.Context, userID string, accept bool) {
+	if _, err := uuid.Parse(userID); err != nil || userID == c.userID {
+		c.sendError("control_invalid", "That control request is not valid.", "")
+		return
+	}
+	exists, err := c.hub.rdb.Exists(ctx, controlReqKey(c.userID, userID)).Result()
+	if err != nil {
+		c.sendError("internal", "Could not answer that request.", "")
+		return
+	}
+	if exists == 0 {
+		c.sendError("control_expired", "That request expired.", "")
+		return
+	}
+	if err := c.hub.rdb.Del(ctx, controlReqKey(c.userID, userID)).Err(); err != nil {
+		c.hub.log.Warn("control request delete", "user", userID, "err", err)
+	}
+	if accept {
+		ok, err := c.hub.store.SharesGroup(ctx, c.userID, userID)
+		if err != nil || !ok {
+			accept = false
+		}
+	}
+	if !accept {
+		c.hub.publishUser(ctx, userID, controlResultMessage{Type: "control_result", RoomID: c.userID, Accepted: false})
+		return
+	}
+	n, err := c.hub.rdb.SCard(ctx, controllersKey(c.userID)).Result()
+	if err != nil || n >= maxControllers {
+		c.hub.publishUser(ctx, userID, controlResultMessage{Type: "control_result", RoomID: c.userID, Accepted: false})
+		c.sendError("control_invalid", "Too many people already have control.", "")
+		return
+	}
+	pipe := c.hub.rdb.TxPipeline()
+	pipe.SAdd(ctx, controllersKey(c.userID), userID)
+	pipe.Expire(ctx, controllersKey(c.userID), stateTTL)
+	pipe.SAdd(ctx, controllingKey(userID), c.userID)
+	if _, err := pipe.Exec(ctx); err != nil {
+		c.hub.log.Error("grant control", "user", userID, "err", err)
+		c.sendError("internal", "Could not share control.", "")
+		return
+	}
+	c.hub.publishRoom(ctx, c.userID)
+	c.hub.publishUser(ctx, userID, controlResultMessage{Type: "control_result", RoomID: c.userID, Accepted: true})
+}
+
+func (c *client) handleControlRevoke(ctx context.Context, userID string) {
+	if _, err := uuid.Parse(userID); err != nil {
+		c.sendError("control_invalid", "That person isn't valid.", "")
+		return
+	}
+	if !c.dropControlOf(ctx, c.userID, userID) {
+		return
+	}
+	c.hub.publishRoom(ctx, c.userID)
+	c.hub.publishUser(ctx, userID, controlRevokedMessage{Type: "control_revoked", RoomID: c.userID})
+}
+
+func (c *client) handleControlRelease(ctx context.Context, room string) {
+	if room == "" {
+		room = c.listeningTo
+	}
+	if _, err := uuid.Parse(room); err != nil || room == c.userID {
+		c.sendError("control_invalid", "You aren't controlling that room.", room)
+		return
+	}
+	if !c.dropControl(ctx, room) {
+		return
+	}
+	c.hub.publishRoom(ctx, room)
+}
+
+// dropControl removes this user from a room they were allowed to drive.
+func (c *client) dropControl(ctx context.Context, room string) bool {
+	return c.dropControlOf(ctx, room, c.userID)
+}
+
+func (c *client) dropControlOf(ctx context.Context, room, userID string) bool {
+	removed, err := c.hub.rdb.SRem(ctx, controllersKey(room), userID).Result()
+	if err != nil {
+		c.hub.log.Warn("drop control", "room", room, "user", userID, "err", err)
+		return false
+	}
+	if removed == 0 {
+		return false
+	}
+	if err := c.hub.rdb.SRem(ctx, controllingKey(userID), room).Err(); err != nil {
+		c.hub.log.Warn("drop controlling index", "room", room, "user", userID, "err", err)
+	}
+	return true
+}
+
+func (c *client) clearControllers(ctx context.Context, room string) {
+	ids, err := c.hub.rdb.SMembers(ctx, controllersKey(room)).Result()
+	if err != nil {
+		c.hub.log.Warn("list controllers", "room", room, "err", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	pipe := c.hub.rdb.TxPipeline()
+	pipe.Del(ctx, controllersKey(room))
+	for _, id := range ids {
+		pipe.SRem(ctx, controllingKey(id), room)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		c.hub.log.Warn("clear controllers", "room", room, "err", err)
+		return
+	}
+	for _, id := range ids {
+		c.hub.publishUser(ctx, id, controlRevokedMessage{Type: "control_revoked", RoomID: room})
+	}
+}
+
+// releaseControlling drops every room this user was allowed to drive.
+// Used when their last tab closes.
+func (c *client) releaseControlling(ctx context.Context) {
+	rooms, err := c.hub.rdb.SMembers(ctx, controllingKey(c.userID)).Result()
+	if err != nil {
+		c.hub.log.Warn("list controlling", "user", c.userID, "err", err)
+		return
+	}
+	for _, room := range rooms {
+		if c.dropControl(ctx, room) {
+			c.hub.publishRoom(ctx, room)
+		}
+	}
 }
 
 func abs64(v int64) int64 {

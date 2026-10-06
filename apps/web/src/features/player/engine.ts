@@ -24,6 +24,7 @@ type Deps = {
   send: (msg: ClientMessage) => boolean;
   fetchTrack: (id: string) => Promise<Track>;
   getRoom: (id: string) => RoomSnapshot | undefined;
+  meId: string;
 };
 
 class StaleLoad extends Error {}
@@ -49,6 +50,9 @@ export class PlayerEngine {
   private expectPlay = 0;
   private userPaused = false;
   private lastTimeUpdate = 0;
+  /** Media events fired while applying someone else's state must not be published back. */
+  private publishLocks = 0;
+  private remoteToken = 0;
   private readonly cleanup: (() => void)[] = [];
 
   constructor(
@@ -100,6 +104,10 @@ export class PlayerEngine {
       return;
     }
     const mode = usePlayer.getState().mode;
+    if (mode === "listener" && this.controllingHost()) {
+      this.publishControlled({ trackId: track.id, positionMs: 0, paused: false });
+      return;
+    }
     if (mode === "listener") this.deps.send({ type: "leave" });
     if (mode === "host" && this.loadedTrackId === track.id) {
       this.seek(0);
@@ -124,6 +132,19 @@ export class PlayerEngine {
 
   toggle() {
     const { mode, status } = usePlayer.getState();
+    if (mode === "listener" && this.controllingHost()) {
+      if (this.audio.paused || this.audio.ended) {
+        const positionMs = this.audio.ended ? 0 : Math.round(this.audio.currentTime * 1000);
+        if (this.audio.ended) this.audio.currentTime = 0;
+        this.userPaused = false;
+        void this.playQuiet();
+        this.publishControlled({ paused: false, positionMs });
+      } else {
+        this.pauseQuiet();
+        this.publishControlled({ paused: true });
+      }
+      return;
+    }
     if (mode === "listener") {
       if (status === "blocked") this.resync();
       return;
@@ -138,6 +159,12 @@ export class PlayerEngine {
   }
 
   seek(ms: number) {
+    if (usePlayer.getState().mode === "listener" && this.controllingHost() && this.loadedTrackId) {
+      this.seekQuiet(ms);
+      this.publishControlled({ positionMs: Math.round(ms), paused: this.audio.paused });
+      setPlayer({ positionMs: ms });
+      return;
+    }
     if (usePlayer.getState().mode !== "host" || !this.loadedTrackId) return;
     const max = Number.isFinite(this.audio.duration) ? this.audio.duration : Number.POSITIVE_INFINITY;
     this.audio.currentTime = Math.min(Math.max(0, ms / 1000), max);
@@ -154,9 +181,57 @@ export class PlayerEngine {
     setPlayer({ ...initialPlayerState });
   }
 
+  /** Host id of the room this listener is allowed to drive, or null. */
+  private controllingHost(): string | null {
+    const { mode, hostId } = usePlayer.getState();
+    if (mode !== "listener" || !hostId) return null;
+    const controllers = this.deps.getRoom(hostId)?.controllers ?? [];
+    return controllers.includes(this.deps.meId) ? hostId : null;
+  }
+
+  private publishControlled(over: { trackId?: string; positionMs?: number; paused?: boolean }) {
+    const hostId = this.controllingHost();
+    const trackId = over.trackId ?? this.loadedTrackId;
+    if (!hostId || !trackId) return;
+    this.deps.send({
+      type: "state",
+      roomId: hostId,
+      trackId,
+      positionMs: over.positionMs ?? Math.round(this.audio.currentTime * 1000),
+      paused: over.paused ?? this.audio.paused,
+      rate: this.audio.playbackRate,
+      capturedAt: Math.round(serverClock.now()),
+    });
+  }
+
+  requestControl() {
+    const { mode, hostId } = usePlayer.getState();
+    if (mode !== "listener" || !hostId) {
+      toast.error("Listen along first, then ask for control.");
+      return;
+    }
+    if (!this.deps.send({ type: "control_request", roomId: hostId })) {
+      toast.error("Reconnecting… try again in a moment.");
+    }
+  }
+
+  releaseControl() {
+    const hostId = this.controllingHost();
+    if (!hostId) return;
+    this.deps.send({ type: "control_release", roomId: hostId });
+  }
+
+  respondControl(userId: string, accept: boolean) {
+    this.deps.send({ type: "control_respond", userId, accept });
+  }
+
+  revokeControl(userId: string) {
+    this.deps.send({ type: "control_revoke", userId });
+  }
+
   private publish() {
     const { mode } = usePlayer.getState();
-    if (mode !== "host" || !this.loadedTrackId) return;
+    if (this.publishLocks > 0 || mode !== "host" || !this.loadedTrackId) return;
     this.deps.send({
       type: "state",
       trackId: this.loadedTrackId,
@@ -203,6 +278,49 @@ export class PlayerEngine {
   onRoomChange(roomId: string) {
     const { mode, hostId } = usePlayer.getState();
     if (mode === "listener" && roomId === hostId) void this.syncToRoom();
+    if (mode === "host" && roomId === this.deps.meId) void this.adoptRemote();
+  }
+
+  /** Apply a state published by someone who was granted control, without echoing it. */
+  private async adoptRemote() {
+    const token = ++this.remoteToken;
+    const read = () => {
+      const st = this.deps.getRoom(this.deps.meId)?.state;
+      if (!st?.by || st.by === this.deps.meId) return null;
+      return st;
+    };
+    if (!read()) return;
+    this.publishLocks++;
+    try {
+      let st = read();
+      if (!st) return;
+      if (st.trackId !== this.loadedTrackId) {
+        const track = await this.deps.fetchTrack(st.trackId);
+        if (token !== this.remoteToken) return;
+        st = read();
+        if (!st || track.id !== st.trackId) return;
+        await this.load(track);
+        if (token !== this.remoteToken) return;
+        st = read();
+        if (!st) return;
+      }
+      this.audio.playbackRate = st.rate;
+      const pos = st.paused ? st.positionMs : expectedPositionMs(st, serverClock.now());
+      this.seekQuiet(pos);
+      setPlayer({ positionMs: pos, notice: null });
+      if (st.paused) {
+        this.pauseQuiet();
+        setPlayer({ status: "paused" });
+      } else {
+        this.userPaused = false;
+        await this.playQuiet();
+      }
+    } catch (err) {
+      if (err instanceof StaleLoad || token !== this.remoteToken) return;
+      setPlayer({ status: "error", notice: errorMessage(err, "Couldn't follow the shared change.") });
+    } finally {
+      this.publishLocks = Math.max(0, this.publishLocks - 1);
+    }
   }
 
   private async syncToRoom() {
@@ -308,6 +426,12 @@ export class PlayerEngine {
         return true;
       case "track_unavailable":
         if (mode === "host") this.stop();
+        toast.error(msg.message);
+        return true;
+      case "not_controller":
+      case "control_invalid":
+      case "control_pending":
+      case "control_expired":
         toast.error(msg.message);
         return true;
       default:

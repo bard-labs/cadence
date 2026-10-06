@@ -10,18 +10,24 @@ import { Spinner } from "@/components/ui/spinner";
 import { useLive } from "@/features/live/live-provider";
 import { usePlayer } from "@/features/player/player-store";
 import { coverUrl } from "@/lib/artwork";
+import { useRoom } from "@/lib/realtime/store";
 import { cn } from "@/lib/utils";
 
 export function PlayerBar() {
-  const { engine } = useLive();
+  const { engine, me } = useLive();
   const p = usePlayer();
+  const sharedRoom = useRoom(p.mode === "listener" ? p.hostId : null);
   const visible = p.mode !== "idle";
   const isListener = p.mode === "listener";
+  const shared = isListener && (sharedRoom?.controllers ?? []).includes(me.id);
+  const canDrive = p.mode === "host" || shared;
   const busy = p.status === "loading" || p.status === "buffering";
   const showPause = p.status === "playing" || p.status === "buffering";
-  const canToggle = p.mode === "host" ? p.track !== null && p.status !== "loading" : p.status === "blocked";
+  const canToggle = canDrive ? p.track !== null && p.status !== "loading" : p.status === "blocked";
+  const art = p.track?.coverUrl || (p.track ? coverUrl(p.track.id, 160) : null);
 
-  const subtitle = isListener ? `Listening with @${p.hostName}` : p.track ? `@${p.track.uploaderUsername}` : "";
+  const credit = p.track?.artist || (p.track ? `@${p.track.uploaderUsername}` : "");
+  const subtitle = isListener ? `${shared ? "In control · " : ""}Listening with @${p.hostName}` : credit;
 
   return (
     <AnimatePresence>
@@ -37,7 +43,14 @@ export function PlayerBar() {
           <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:h-20 sm:gap-6 sm:px-6">
             <div className="flex min-w-0 flex-1 items-center gap-3 sm:w-72 sm:flex-none">
               <div className="relative size-10 shrink-0 overflow-hidden rounded-md bg-muted sm:size-12">
-                {p.track && <Image src={coverUrl(p.track.id, 160)} alt="" fill sizes="48px" className="object-cover" />}
+                {art?.startsWith("https://images.unsplash.com/") ? (
+                  <Image src={art} alt="" fill sizes="48px" className="object-cover" />
+                ) : (
+                  art && (
+                    // biome-ignore lint/performance/noImgElement: cover is served from object storage
+                    <img src={art} alt="" className="size-full object-cover" />
+                  )
+                )}
               </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">
@@ -54,13 +67,13 @@ export function PlayerBar() {
               <SeekBar
                 positionMs={p.positionMs}
                 durationMs={p.durationMs}
-                onSeek={p.mode === "host" ? (ms) => engine?.seek(ms) : undefined}
+                onSeek={canDrive ? (ms) => engine?.seek(ms) : undefined}
               />
               <SyncLine />
             </div>
 
             <div className="flex items-center gap-1 sm:gap-2">
-              {(p.mode === "host" || p.status === "blocked") && (
+              {(canDrive || p.status === "blocked") && (
                 <Button
                   size="icon-lg"
                   className="rounded-full"

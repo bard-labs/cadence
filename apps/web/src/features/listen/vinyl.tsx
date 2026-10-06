@@ -5,7 +5,18 @@ import { coverUrl } from "@/lib/artwork";
 import { cn } from "@/lib/utils";
 
 /** Circular artwork that spins while playing and holds its angle when paused. */
-export function Vinyl({ trackId, hue, spinning }: { trackId: string | null; hue: number; spinning: boolean }) {
+export function Vinyl({
+  trackId,
+  coverUrl: embedded,
+  hue,
+  spinning,
+}: {
+  trackId: string | null;
+  coverUrl?: string | null;
+  hue: number;
+  spinning: boolean;
+}) {
+  const src = embedded || (trackId ? coverUrl(trackId) : null);
   return (
     <div className="relative isolate size-56 shrink-0 sm:size-72">
       <div
@@ -20,15 +31,14 @@ export function Vinyl({ trackId, hue, spinning }: { trackId: string | null; hue:
         )}
         style={{ animationPlayState: spinning ? "running" : "paused" }}
       >
-        {trackId ? (
-          <Image
-            src={coverUrl(trackId)}
-            alt=""
-            fill
-            sizes="(min-width: 640px) 288px, 224px"
-            className="object-cover"
-            priority
-          />
+        {src ? (
+          src.startsWith("https://images.unsplash.com/") ? (
+            <Image src={src} alt="" fill sizes="(min-width: 640px) 288px, 224px" className="object-cover" priority />
+          ) : (
+            // The file's own cover is served from object storage, which is not a Next image host.
+            // biome-ignore lint/performance/noImgElement: remote cover URL is dynamic per upload
+            <img src={src} alt="" className="size-full object-cover" />
+          )
         ) : (
           <div className="flex size-full items-center justify-center bg-[radial-gradient(circle,oklch(0.26_0.01_286),oklch(0.18_0.005_286))]">
             <Disc3 className="size-14 text-muted-foreground/40" aria-hidden />

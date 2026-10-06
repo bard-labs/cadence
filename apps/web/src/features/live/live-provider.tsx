@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { PlayerEngine } from "@/features/player/engine";
 import { api, type Friend, queryKeys, type User } from "@/lib/api";
@@ -55,6 +56,20 @@ export function LiveProvider({ me, children }: { me: User; children: ReactNode }
           if (!eng?.onServerError(msg) && process.env.NODE_ENV !== "production") {
             console.warn("[cadence] server error", msg);
           }
+        } else if (msg.type === "control_request") {
+          toast(`${msg.username} wants control`, {
+            id: `control:${msg.from}`,
+            description: "They'll be able to play, pause, seek, and change the track.",
+            duration: 60_000,
+            action: { label: "Accept", onClick: () => eng?.respondControl(msg.from, true) },
+            cancel: { label: "Decline", onClick: () => eng?.respondControl(msg.from, false) },
+          });
+        } else if (msg.type === "control_result") {
+          toast.dismiss(`control:${msg.roomId}`);
+          if (msg.accepted) toast.success("You have control. Play, pause, and seek will move their room.");
+          else toast("Control was declined.");
+        } else if (msg.type === "control_revoked") {
+          toast("Control ended.");
         }
       },
       onRepeatedFailure: () => {
@@ -64,6 +79,7 @@ export function LiveProvider({ me, children }: { me: User; children: ReactNode }
     });
 
     eng = new PlayerEngine(audio, {
+      meId: me.id,
       send: (m) => socket.send(m),
       fetchTrack: (id) =>
         queryClient.fetchQuery({
@@ -93,7 +109,7 @@ export function LiveProvider({ me, children }: { me: User; children: ReactNode }
       useRealtime.getState().reset();
       setEngine(null);
     };
-  }, [queryClient]);
+  }, [queryClient, me.id]);
 
   const friendIds = useMemo(() => (friends.data ?? []).map((f) => f.userId).sort(), [friends.data]);
   const friendKey = friendIds.join(",");

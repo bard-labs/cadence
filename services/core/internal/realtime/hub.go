@@ -67,7 +67,7 @@ func (h *Hub) Start(ctx context.Context) error {
 					h.log.Warn("bad event envelope", "err", err)
 					continue
 				}
-				h.deliver(env.Room, env.Data)
+				h.deliver(env.Room, env.User, env.Data)
 			}
 		}
 	}()
@@ -207,11 +207,21 @@ func (h *Hub) removeLocked(c *client, room string) {
 	}
 }
 
-func (h *Hub) deliver(room string, data []byte) {
+func (h *Hub) deliver(room, user string, data []byte) {
 	h.mu.RLock()
-	targets := make([]*client, 0, len(h.rooms[room]))
-	for c := range h.rooms[room] {
-		targets = append(targets, c)
+	var targets []*client
+	if user != "" {
+		targets = make([]*client, 0, 2)
+		for c := range h.clients {
+			if c.userID == user {
+				targets = append(targets, c)
+			}
+		}
+	} else {
+		targets = make([]*client, 0, len(h.rooms[room]))
+		for c := range h.rooms[room] {
+			targets = append(targets, c)
+		}
 	}
 	h.mu.RUnlock()
 	for _, c := range targets {
@@ -232,13 +242,27 @@ func (h *Hub) publishRoom(ctx context.Context, room string) {
 	}
 }
 
+// publishUser sends one message to every connection belonging to userID,
+// including connections served by another API instance.
+func (h *Hub) publishUser(ctx context.Context, userID string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	env, _ := json.Marshal(envelope{User: userID, Data: data})
+	if err := h.rdb.Publish(ctx, eventsChannel, env).Err(); err != nil {
+		h.log.Error("publish user", "user", userID, "err", err)
+	}
+}
+
 // Snapshots reads the live state of many rooms in one Redis round trip.
 func (h *Hub) Snapshots(ctx context.Context, rooms []string) (map[string]Snapshot, error) {
 	type cmds struct {
-		state     *redis.StringCmd
-		seq       *redis.StringCmd
-		listeners *redis.IntCmd
-		online    *redis.IntCmd
+		state       *redis.StringCmd
+		seq         *redis.StringCmd
+		listeners   *redis.IntCmd
+		online      *redis.IntCmd
+		controllers *redis.StringSliceCmd
 	}
 	out := make(map[string]Snapshot, len(rooms))
 	if len(rooms) == 0 {
@@ -248,10 +272,11 @@ func (h *Hub) Snapshots(ctx context.Context, rooms []string) (map[string]Snapsho
 	all := make([]cmds, len(rooms))
 	for i, room := range rooms {
 		all[i] = cmds{
-			state:     pipe.Get(ctx, stateKey(room)),
-			seq:       pipe.Get(ctx, seqKey(room)),
-			listeners: pipe.SCard(ctx, listenersKey(room)),
-			online:    pipe.Exists(ctx, presenceKey(room)),
+			state:       pipe.Get(ctx, stateKey(room)),
+			seq:         pipe.Get(ctx, seqKey(room)),
+			listeners:   pipe.SCard(ctx, listenersKey(room)),
+			online:      pipe.Exists(ctx, presenceKey(room)),
+			controllers: pipe.SMembers(ctx, controllersKey(room)),
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -268,6 +293,10 @@ func (h *Hub) Snapshots(ctx context.Context, rooms []string) (map[string]Snapsho
 		s.Seq, _ = all[i].seq.Int64()
 		s.Listeners = all[i].listeners.Val()
 		s.Online = all[i].online.Val() > 0
+		s.Controllers = all[i].controllers.Val()
+		if s.Controllers == nil {
+			s.Controllers = []string{}
+		}
 		out[room] = s
 	}
 	return out, nil
