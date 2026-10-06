@@ -35,7 +35,7 @@ func Load() Config {
 		HTTPAddr:      env("CADENCE_HTTP_ADDR", ":8080"),
 		SessionSecret: env("CADENCE_SESSION_SECRET", "dev-secret-change-me-32-chars-min!!"),
 		CORSOrigin:    env("CADENCE_CORS_ORIGIN", "http://localhost:3000"),
-		DatabaseURL:   env("CADENCE_DATABASE_URL", "postgres://cadence:cadence@localhost:5432/cadence?sslmode=disable"),
+		DatabaseURL:   env("CADENCE_DATABASE_URL", "postgres://cadence:cadence@localhost:5433/cadence?sslmode=disable"),
 		RedisURL:      env("CADENCE_REDIS_URL", "redis://localhost:6379/0"),
 		S3Endpoint:    env("CADENCE_S3_ENDPOINT", "localhost:9000"),
 		S3AccessKey:   env("CADENCE_S3_ACCESS_KEY", "cadence"),
