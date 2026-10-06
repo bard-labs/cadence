@@ -63,6 +63,7 @@ export function PersonStage({ person }: { person: Person }) {
           online={online}
           playing={playing}
           hasState={Boolean(state)}
+          inListenAlong={listeningHere || Boolean(state) || (room?.listeners ?? 0) > 0}
           followingName={followingId ? player.hostName : null}
         />
 
@@ -71,7 +72,9 @@ export function PersonStage({ person }: { person: Person }) {
             {state ? (track.data?.title ?? (track.isError ? "Unknown track" : "Loading…")) : "Nothing playing"}
           </h2>
           <p className="truncate text-sm text-muted-foreground">
-            {state && track.data ? trackCredit(track.data) : emptyLine(person, online)}
+            {state && track.data
+              ? trackCredit(track.data)
+              : emptyLine(person, online, listeningHere || (room?.listeners ?? 0) > 0)}
           </p>
         </div>
 
@@ -165,9 +168,10 @@ function trackCredit(track: {
   return `Uploaded by @${track.uploaderUsername}`;
 }
 
-function emptyLine(person: Person, online: boolean): string {
+function emptyLine(person: Person, online: boolean, inListenAlong: boolean): string {
   if (person.isMe) return "Play a track and your friends can listen along.";
   const f = person.friend;
+  if (inListenAlong) return "In a listen along.";
   if (!online) {
     return f?.lastTrackTitle
       ? `Offline · last played “${f.lastTrackTitle}” ${formatRelative(f.lastPlayedAt)}`
@@ -181,12 +185,14 @@ function StatusChip({
   online,
   playing,
   hasState,
+  inListenAlong,
   followingName,
 }: {
   person: Person;
   online: boolean;
   playing: boolean;
   hasState: boolean;
+  inListenAlong: boolean;
   followingName: string | null;
 }) {
   let label: string;
@@ -199,6 +205,9 @@ function StatusChip({
     tone = "live";
   } else if (hasState && online) {
     label = "Paused";
+    tone = "idle";
+  } else if (!online && inListenAlong) {
+    label = "In a listen along";
     tone = "idle";
   } else if (online) {
     label = person.isMe ? "You" : "Online";

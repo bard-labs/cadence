@@ -177,7 +177,16 @@ function MemberRow({ member }: { member: Member }) {
   const room = useRoom(member.userId);
   const isMe = member.userId === me.id;
   const playing = Boolean(room?.online && room.state && !room.state.paused);
-  const status = isMe ? "You" : playing ? "Playing now" : room?.online ? "Online" : "Offline";
+  const inListenAlong = Boolean(room?.state) || (room?.listeners ?? 0) > 0;
+  const status = isMe
+    ? "You"
+    : playing
+      ? "Playing now"
+      : room?.online
+        ? "Online"
+        : inListenAlong
+          ? "In a listen along"
+          : "Offline";
 
   return (
     <li className="flex items-center gap-3 px-4 py-3">
