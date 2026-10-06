@@ -1,11 +1,23 @@
 commit-msg:
   commands:
-    block-agent-trailers:
+    strip-agent-trailers:
       run: |
-        if grep -qiE 'co-authored-by|cursor' {1}; then
-          echo "Commit message must not include Co-authored-by or Cursor attribution."
-          exit 1
-        fi
+        python3 - {1} <<'PY'
+        import sys
+        path = sys.argv[1]
+        lines = open(path, encoding="utf-8").read().splitlines()
+        kept = [
+            line
+            for line in lines
+            if "co-authored-by" not in line.lower() and "cursor" not in line.lower()
+        ]
+        cleaned = "\n".join(kept).strip() + "\n"
+        open(path, "w", encoding="utf-8").write(cleaned)
+        low = cleaned.lower()
+        if "co-authored-by" in low or "cursor" in low:
+            print("Commit message still contains an agent trailer.", file=sys.stderr)
+            sys.exit(1)
+        PY
 
 pre-commit:
   commands:
