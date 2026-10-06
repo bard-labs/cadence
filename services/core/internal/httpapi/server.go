@@ -42,7 +42,7 @@ func (a *API) Router() http.Handler {
 	}
 	r.Use(a.requestLogger, middleware.Recoverer, securityHeaders)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{a.cfg.AllowedOrigin},
+		AllowedOrigins:   a.cfg.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Content-Type"},
 		AllowCredentials: true,

@@ -45,7 +45,7 @@ func (a *API) sameOrigin(next http.Handler) http.Handler {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
-			if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.AllowedOrigin {
+			if origin := r.Header.Get("Origin"); origin != "" && !a.cfg.OriginAllowed(origin) {
 				a.writeError(w, r, errForbidden)
 				return
 			}

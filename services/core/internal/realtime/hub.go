@@ -31,12 +31,12 @@ type Hub struct {
 	closing bool
 }
 
-func NewHub(rdb *redis.Client, st *store.Store, log *slog.Logger, allowedOrigin string) *Hub {
+func NewHub(rdb *redis.Client, st *store.Store, log *slog.Logger, allowedOrigins ...string) *Hub {
 	return &Hub{
 		rdb:     rdb,
 		store:   st,
 		log:     log,
-		origins: []string{allowedOrigin},
+		origins: append([]string(nil), allowedOrigins...),
 		rooms:   make(map[string]map[*client]struct{}),
 		clients: make(map[*client]struct{}),
 		perUser: make(map[string]int),

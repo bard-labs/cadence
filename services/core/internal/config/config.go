@@ -16,7 +16,8 @@ type Config struct {
 	SessionTTL     time.Duration
 	CookieSecure   bool
 	CookieDomain   string
-	AllowedOrigin  string
+	// AllowedOrigins is CADENCE_CORS_ORIGIN split on commas (LAN + public).
+	AllowedOrigins []string
 	DatabaseURL    string
 	RedisURL       string
 	S3Endpoint     string
@@ -35,6 +36,28 @@ type Config struct {
 
 func (c Config) IsProduction() bool { return c.Env == "production" }
 
+// OriginAllowed reports whether the browser Origin header is on the allow-list.
+func (c Config) OriginAllowed(origin string) bool {
+	for _, o := range c.AllowedOrigins {
+		if o == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func splitOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSuffix(strings.TrimSpace(p), "/")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		Env:            env("CADENCE_ENV", "development"),
@@ -43,7 +66,7 @@ func Load() (Config, error) {
 		SessionTTL:     30 * 24 * time.Hour,
 		CookieSecure:   envBool("CADENCE_COOKIE_SECURE", false),
 		CookieDomain:   os.Getenv("CADENCE_COOKIE_DOMAIN"),
-		AllowedOrigin:  strings.TrimSuffix(env("CADENCE_CORS_ORIGIN", "http://localhost:3000"), "/"),
+		AllowedOrigins: splitOrigins(env("CADENCE_CORS_ORIGIN", "http://localhost:3000")),
 		DatabaseURL:    env("CADENCE_DATABASE_URL", "postgres://cadence:cadence@localhost:5433/cadence?sslmode=disable"),
 		RedisURL:       env("CADENCE_REDIS_URL", "redis://localhost:6379/0"),
 		S3Endpoint:     env("CADENCE_S3_ENDPOINT", "localhost:9000"),
@@ -72,12 +95,21 @@ func (c Config) validate() error {
 	if c.Env != "development" && c.Env != "production" {
 		errs = append(errs, fmt.Errorf("CADENCE_ENV must be development or production, got %q", c.Env))
 	}
+	if len(c.AllowedOrigins) == 0 {
+		errs = append(errs, errors.New("CADENCE_CORS_ORIGIN must list at least one origin"))
+	}
 	if c.IsProduction() {
-		if !c.CookieSecure {
-			errs = append(errs, errors.New("CADENCE_COOKIE_SECURE must be true in production"))
+		// Home LAN may use http://192.168.x.x alongside https://public. Only
+		// require Secure cookies when every allowed origin is HTTPS.
+		allHTTPS := true
+		for _, o := range c.AllowedOrigins {
+			if !strings.HasPrefix(o, "https://") {
+				allHTTPS = false
+				break
+			}
 		}
-		if !strings.HasPrefix(c.AllowedOrigin, "https://") {
-			errs = append(errs, errors.New("CADENCE_CORS_ORIGIN must be https in production"))
+		if allHTTPS && !c.CookieSecure {
+			errs = append(errs, errors.New("CADENCE_COOKIE_SECURE must be true when all CORS origins are https"))
 		}
 	}
 	if c.MaxUploadBytes <= 0 {

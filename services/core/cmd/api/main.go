@@ -73,7 +73,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("cannot prepare storage bucket at CADENCE_S3_ENDPOINT: %w", err)
 	}
 
-	hub := realtime.NewHub(rdb, st, log, cfg.AllowedOrigin)
+	hub := realtime.NewHub(rdb, st, log, cfg.AllowedOrigins...)
 	if err := hub.Start(ctx); err != nil {
 		return fmt.Errorf("realtime hub: %w", err)
 	}

@@ -1,26 +1,33 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV !== "production";
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws";
-const mediaUrl = process.env.NEXT_PUBLIC_MEDIA_URL ?? "http://localhost:9000";
+const rawApi = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const rawWs = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws";
+const rawMedia = process.env.NEXT_PUBLIC_MEDIA_URL ?? "http://localhost:9000";
+const sameOrigin = !rawApi || rawApi === "same-origin";
 
-const origin = (url: string) => new URL(url).origin;
+const origin = (url: string) => {
+  if (!url || url === "same-origin") return "'self'";
+  return new URL(url).origin;
+};
 
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: https://images.unsplash.com ${origin(mediaUrl)}`,
+  `img-src 'self' data: blob: https://images.unsplash.com ${sameOrigin ? "" : origin(rawMedia)}`.trim(),
   "font-src 'self'",
-  `connect-src 'self' ${origin(apiUrl)} ${origin(wsUrl)} ${origin(mediaUrl)}${isDev ? " ws://localhost:*" : ""}`,
-  `media-src 'self' blob: data: ${origin(mediaUrl)}`,
+  sameOrigin
+    ? `connect-src 'self'${isDev ? " ws://localhost:* http://localhost:*" : ""}`
+    : `connect-src 'self' ${origin(rawApi)} ${origin(rawWs)} ${origin(rawMedia)}${isDev ? " ws://localhost:*" : ""}`,
+  `media-src 'self' blob: data:${sameOrigin ? "" : ` ${origin(rawMedia)}`}`,
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  ...(apiUrl.startsWith("https://") ? ["upgrade-insecure-requests"] : []),
+  // Do NOT set upgrade-insecure-requests: LAN access is http://192.168.100.100
+  // and that directive would force CSS/JS onto https:// and break styling.
 ].join("; ");
 
 const securityHeaders = [
@@ -29,9 +36,6 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-  ...(apiUrl.startsWith("https://")
-    ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]
-    : []),
 ];
 
 const nextConfig: NextConfig = {
