@@ -1,4 +1,4 @@
-.PHONY: up down up-all check-docker tidy dev-api dev-worker dev-web dev-api-docker dev-worker-docker env
+.PHONY: up down up-all check-docker tidy dev dev-api dev-worker dev-web dev-api-docker dev-worker-docker env test
 
 COMPOSE = docker compose -f deploy/docker-compose.yml
 
@@ -53,3 +53,19 @@ dev-worker-docker: check-docker
 
 dev-web:
 	pnpm --filter @bardlabs/cadence-web dev
+
+# Infra in Docker, then API + worker + web together. Ctrl+C stops all three.
+dev: up tidy
+	@$(MAKE) --no-print-directory -j3 dev-api-run dev-worker-run dev-web
+
+dev-api-run:
+	cd services/core && $(GO_ENV) go run ./cmd/api
+
+dev-worker-run:
+	cd services/core && $(GO_ENV) go run ./cmd/worker
+
+test:
+	cd services/core && $(GO_ENV) go vet ./... && $(GO_ENV) go test ./...
+	pnpm exec biome check .
+	pnpm --filter @bardlabs/cadence-web lint
+	pnpm --filter @bardlabs/cadence-web build
