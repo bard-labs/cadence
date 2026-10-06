@@ -8,6 +8,8 @@ import {
 import type Hls from "hls.js";
 import { toast } from "sonner";
 
+import { AudioGraph, prefersNativeHls, SILENT_WAV } from "@/features/player/audio-graph";
+import { needsAudioGraph, useFx } from "@/features/player/fx-store";
 import { initialPlayerState, setPlayer, usePlayer } from "@/features/player/player-store";
 import { errorMessage, type Track } from "@/lib/api";
 import { serverClock } from "@/lib/realtime/clock";
@@ -53,6 +55,8 @@ export class PlayerEngine {
   /** Media events fired while applying someone else's state must not be published back. */
   private publishLocks = 0;
   private remoteToken = 0;
+  private graph: AudioGraph;
+  private unlocked = false;
   private readonly cleanup: (() => void)[] = [];
 
   constructor(
@@ -60,16 +64,20 @@ export class PlayerEngine {
     private readonly deps: Deps,
   ) {
     audio.preload = "auto";
+    audio.setAttribute("playsinline", "true");
+    audio.setAttribute("webkit-playsinline", "true");
     const saved = Number(localStorage.getItem(VOLUME_KEY));
     const volume = Number.isFinite(saved) && saved > 0 && saved <= 1 ? saved : 0.8;
     audio.volume = volume;
     setPlayer({ volume, muted: audio.muted });
+    this.graph = new AudioGraph(audio);
 
     this.on("play", this.onPlay);
     this.on("pause", this.onPause);
     this.on("playing", () => {
       this.publish();
       setPlayer({ status: "playing", notice: null });
+      this.updatePositionState();
     });
     this.on("waiting", () => {
       if (!this.audio.paused) setPlayer({ status: "buffering" });
@@ -80,6 +88,7 @@ export class PlayerEngine {
     this.on("timeupdate", this.onTimeUpdate);
     this.on("durationchange", () => {
       if (Number.isFinite(audio.duration)) setPlayer({ durationMs: audio.duration * 1000 });
+      this.updatePositionState();
     });
     this.on("volumechange", () => setPlayer({ volume: audio.volume, muted: audio.muted }));
     this.on("error", () => {
@@ -87,13 +96,75 @@ export class PlayerEngine {
       setPlayer({ status: "error", notice: "Playback failed. Try playing the track again." });
     });
     this.setupMediaSession();
+    this.cleanup.push(useFx.subscribe((s) => void this.syncFx(s)));
   }
 
   destroy() {
     this.stopTimers();
     this.unload();
+    this.graph.teardown();
     for (const fn of this.cleanup) fn();
     usePlayer.setState(initialPlayerState);
+  }
+
+  getAnalyser() {
+    return this.graph.getAnalyser();
+  }
+
+  /** Must run inside a click/tap handler before iOS will allow autoplay. */
+  async unlock() {
+    if (this.unlocked) {
+      await this.graph.resume();
+      return;
+    }
+    try {
+      const a = new Audio(SILENT_WAV);
+      a.setAttribute("playsinline", "true");
+      await a.play();
+      a.pause();
+      this.unlocked = true;
+    } catch {
+      // Still try; some browsers unlock on the real play() later.
+    }
+    await this.graph.resume();
+  }
+
+  private async syncFx(s = useFx.getState()) {
+    if (!needsAudioGraph(s)) {
+      if (this.graph.active)
+        this.graph.apply({
+          ...s,
+          studioOn: false,
+          visual: "off",
+          reverb: 0,
+          autoPan: false,
+          night: false,
+          lofi: false,
+          bass: 0,
+          mid: 0,
+          treble: 0,
+          bands: s.bands.map(() => 0),
+        });
+      return;
+    }
+    const ok = await this.graph.ensure();
+    if (!ok) {
+      toast.error("Studio mode needs Web Audio. Try Chrome or another browser.");
+      useFx.getState().setStudio(false);
+      useFx.getState().setVisual("off");
+      return;
+    }
+    this.graph.apply(s);
+    if (usePlayer.getState().mode === "host" && s.tempo !== this.audio.playbackRate) {
+      try {
+        // Nightcore / slowed: pitch follows rate on purpose.
+        (this.audio as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = false;
+        this.audio.playbackRate = s.tempo;
+      } catch {
+        this.audio.playbackRate = s.tempo;
+      }
+      this.publish();
+    }
   }
 
   // ---- Host ---------------------------------------------------------------
@@ -116,6 +187,7 @@ export class PlayerEngine {
     }
     this.syncToken++;
     this.stopTimers();
+    await this.unlock();
     setPlayer({ mode: "host", hostId: null, hostName: null, driftMs: null, notice: null });
     try {
       await this.load(track);
@@ -130,7 +202,8 @@ export class PlayerEngine {
     await this.playQuiet();
   }
 
-  toggle() {
+  async toggle() {
+    await this.unlock();
     const { mode, status } = usePlayer.getState();
     if (mode === "listener" && this.controllingHost()) {
       if (this.audio.paused || this.audio.ended) {
@@ -469,11 +542,16 @@ export class PlayerEngine {
     if (!url) throw new Error("This track has no stream.");
 
     const audio = this.audio;
+    // Studio / visualizer needs MSE. Until then, Safari/iOS keep native HLS so
+    // background playback and the Dynamic Island keep working.
+    const wantNative = prefersNativeHls(audio) && !needsAudioGraph() && !this.graph.active;
     const { default: HlsCtor } = await import("hls.js");
     if (token !== this.loadToken) throw new StaleLoad();
 
     await new Promise<void>((resolve, reject) => {
-      if (HlsCtor.isSupported()) {
+      const useNative =
+        wantNative || (!HlsCtor.isSupported() && Boolean(audio.canPlayType("application/vnd.apple.mpegurl")));
+      if (!useNative && HlsCtor.isSupported()) {
         const hls = new HlsCtor({ maxBufferLength: 30, enableWorker: true });
         this.hls = hls;
         let parsed = false;
@@ -524,6 +602,7 @@ export class PlayerEngine {
     if (token !== this.loadToken) throw new StaleLoad();
     this.loadedTrackId = track.id;
     this.loadingTrackId = null;
+    await this.syncFx();
     setPlayer({ status: "paused" });
   }
 
@@ -545,6 +624,7 @@ export class PlayerEngine {
     if (!this.audio.paused) return;
     this.expectPlay++;
     try {
+      await this.graph.resume();
       await this.audio.play();
     } catch (err) {
       this.expectPlay = Math.max(0, this.expectPlay - 1);
@@ -607,6 +687,7 @@ export class PlayerEngine {
     if (now - this.lastTimeUpdate < 250) return;
     this.lastTimeUpdate = now;
     setPlayer({ positionMs: this.audio.currentTime * 1000 });
+    this.updatePositionState();
   };
 
   private stopTimers() {
@@ -626,9 +707,18 @@ export class PlayerEngine {
     if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
-      ["play", () => this.toggle()],
-      ["pause", () => this.toggle()],
+      ["play", () => void this.toggle()],
+      ["pause", () => void this.toggle()],
       ["stop", () => this.stop()],
+      [
+        "seekto",
+        (d) => {
+          if (d.seekTime == null) return;
+          this.seek(d.seekTime * 1000);
+        },
+      ],
+      ["seekforward", (d) => this.seek((this.audio.currentTime + (d.seekOffset ?? 10)) * 1000)],
+      ["seekbackward", (d) => this.seek((this.audio.currentTime - (d.seekOffset ?? 10)) * 1000)],
     ];
     for (const [action, fn] of handlers) {
       try {
@@ -648,10 +738,29 @@ export class PlayerEngine {
 
   private updateMediaSession(track: Track) {
     if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+    const art = track.coverUrl ? [{ src: track.coverUrl, sizes: "600x600", type: "image/jpeg" }] : undefined;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
-      artist: `@${track.uploaderUsername}`,
-      album: "Cadence",
+      artist: track.artist || `@${track.uploaderUsername}`,
+      album: track.album || "Cadence",
+      artwork: art,
     });
+    this.updatePositionState();
+  }
+
+  private updatePositionState() {
+    if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
+    const duration = this.audio.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        playbackRate: this.audio.playbackRate || 1,
+        position: Math.min(this.audio.currentTime, duration),
+      });
+      navigator.mediaSession.playbackState = this.audio.paused ? "paused" : "playing";
+    } catch {
+      // Some browsers reject out-of-range position updates mid-seek.
+    }
   }
 }

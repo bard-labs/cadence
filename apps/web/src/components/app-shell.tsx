@@ -103,7 +103,7 @@ function Shell({ me, children }: { me: User; children: ReactNode }) {
       <main
         className={cn(
           "mx-auto w-full max-w-6xl flex-1 px-4 pt-6 sm:px-6 sm:pt-10",
-          hasPlayer ? "pb-40 sm:pb-28" : "pb-24 sm:pb-12",
+          hasPlayer ? "pb-48 sm:pb-28" : "pb-24 sm:pb-12",
         )}
       >
         {children}

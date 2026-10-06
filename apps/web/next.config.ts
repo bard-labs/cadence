@@ -14,7 +14,7 @@ const csp = [
   `img-src 'self' data: blob: https://images.unsplash.com ${origin(mediaUrl)}`,
   "font-src 'self'",
   `connect-src 'self' ${origin(apiUrl)} ${origin(wsUrl)} ${origin(mediaUrl)}${isDev ? " ws://localhost:*" : ""}`,
-  `media-src 'self' blob: ${origin(mediaUrl)}`,
+  `media-src 'self' blob: data: ${origin(mediaUrl)}`,
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",

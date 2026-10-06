@@ -91,7 +91,7 @@ function TrackRow({ track }: { track: Track }) {
 
   const onPlay = () => {
     if (!engine) return;
-    if (current) engine.toggle();
+    if (current) void engine.toggle();
     else void engine.playTrack(track);
   };
 
@@ -103,18 +103,23 @@ function TrackRow({ track }: { track: Track }) {
       )}
     >
       <div className="relative size-11 shrink-0 overflow-hidden rounded-md bg-muted">
-        <Image
-          src={coverUrl(track.id, 120)}
-          alt=""
-          fill
-          sizes="44px"
-          className={cn("object-cover", !ready && "opacity-40 grayscale")}
-        />
+        {track.coverUrl ? (
+          // biome-ignore lint/performance/noImgElement: cover is served from object storage
+          <img src={track.coverUrl} alt="" className={cn("size-full object-cover", !ready && "opacity-40 grayscale")} />
+        ) : (
+          <Image
+            src={coverUrl(track.id, 120)}
+            alt=""
+            fill
+            sizes="44px"
+            className={cn("object-cover", !ready && "opacity-40 grayscale")}
+          />
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <p className={cn("truncate text-sm font-medium", current && "text-live")}>{track.title}</p>
         <p className="truncate text-xs text-muted-foreground">
-          @{track.uploaderUsername} · {formatRelative(track.createdAt)}
+          {track.artist ? `${track.artist} · ` : ""}@{track.uploaderUsername} · {formatRelative(track.createdAt)}
         </p>
       </div>
       <StatusCell track={track} />
