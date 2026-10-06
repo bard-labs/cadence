@@ -1,14 +1,16 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, Mic2, Pause, Play, Radio, SlidersHorizontal, Sparkles, Volume2, VolumeX, X } from "lucide-react";
+import { Pause, Play, Radio, Volume2, VolumeX, X } from "lucide-react";
 import Image from "next/image";
 
 import { Button } from "@/components/ui/button";
 import { SeekBar } from "@/components/ui/seek-bar";
 import { Spinner } from "@/components/ui/spinner";
 import { useLive } from "@/features/live/live-provider";
+import { DynamicIsland } from "@/features/player/dynamic-island";
 import { useFx } from "@/features/player/fx-store";
+import { PlayerHotkeys } from "@/features/player/hotkeys";
 import { ImmersivePlayer } from "@/features/player/immersive";
 import { LyricsPanel } from "@/features/player/lyrics-panel";
 import { usePlayer } from "@/features/player/player-store";
@@ -38,6 +40,8 @@ export function PlayerBar() {
 
   return (
     <>
+      <PlayerHotkeys />
+      <DynamicIsland />
       <AnimatePresence>
         {visible && (
           <motion.section
@@ -91,7 +95,6 @@ export function PlayerBar() {
               </div>
 
               <div className="flex items-center gap-0.5 sm:gap-1">
-                <ModeButtons />
                 {(canDrive || p.status === "blocked") && (
                   <Button
                     size="icon-lg"
@@ -134,54 +137,6 @@ export function PlayerBar() {
   );
 }
 
-function ModeButtons() {
-  const fx = useFx();
-  return (
-    <div className="hidden items-center md:flex">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Studio"
-        title="Studio"
-        className={cn(fx.eqOpen && "text-live")}
-        onClick={() => fx.setEqOpen(!fx.eqOpen)}
-      >
-        <SlidersHorizontal />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Lyrics"
-        title="Lyrics"
-        className={cn(fx.lyricsOpen && "text-live")}
-        onClick={() => fx.setLyricsOpen(!fx.lyricsOpen)}
-      >
-        <Mic2 />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="DJ mode"
-        title="DJ mode"
-        className={cn(fx.djOpen && "text-live")}
-        onClick={() => fx.setDjOpen(true)}
-      >
-        <Sparkles />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Stats"
-        title="Stats for nerds"
-        className={cn(fx.statsOpen && "text-live")}
-        onClick={() => fx.setStatsOpen(!fx.statsOpen)}
-      >
-        <Activity />
-      </Button>
-    </div>
-  );
-}
-
 function SyncLine() {
   const { mode, status, notice, driftMs } = usePlayer();
   const text =
@@ -204,24 +159,9 @@ function SyncLine() {
 
 function MobileProgress() {
   const { positionMs, durationMs, notice, status } = usePlayer();
-  const fx = useFx();
   const pct = durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
   return (
     <div className="sm:hidden">
-      <div className="flex items-center justify-center gap-1 px-2 pb-1">
-        <Button variant="ghost" size="icon-xs" aria-label="Studio" onClick={() => fx.setEqOpen(true)}>
-          <SlidersHorizontal />
-        </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Lyrics" onClick={() => fx.setLyricsOpen(true)}>
-          <Mic2 />
-        </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="DJ mode" onClick={() => fx.setDjOpen(true)}>
-          <Sparkles />
-        </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Stats" onClick={() => fx.setStatsOpen(true)}>
-          <Activity />
-        </Button>
-      </div>
       {notice && (
         <p
           className={cn(
