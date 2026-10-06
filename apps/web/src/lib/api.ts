@@ -161,12 +161,25 @@ export const api = {
   declineInvite: (id: string) =>
     request<void>(`/v1/invites/${encodeURIComponent(id)}/decline`, { method: "POST", body: {} }),
 
-  tracks: (opts: { page?: number; pageSize?: number; q?: string } = {}, signal?: AbortSignal) => {
+  tracks: async (opts: { page?: number; pageSize?: number; q?: string } = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams();
-    params.set("page", String(opts.page ?? 1));
-    params.set("pageSize", String(opts.pageSize ?? 20));
+    const page = opts.page ?? 1;
+    const pageSize = opts.pageSize ?? 20;
+    params.set("page", String(page));
+    params.set("pageSize", String(pageSize));
     if (opts.q?.trim()) params.set("q", opts.q.trim());
-    return request<TrackPage>(`/v1/tracks?${params}`, { signal });
+    // Tolerate a bare array from an older API binary so the library never goes blank.
+    const data = await request<TrackPage | Track[]>(`/v1/tracks?${params}`, { signal });
+    if (Array.isArray(data)) {
+      return { items: data, page: 1, pageSize: data.length, total: data.length, totalPages: data.length > 0 ? 1 : 0 };
+    }
+    return {
+      items: data.items ?? [],
+      page: data.page ?? page,
+      pageSize: data.pageSize ?? pageSize,
+      total: data.total ?? 0,
+      totalPages: data.totalPages ?? 0,
+    };
   },
   track: (id: string, signal?: AbortSignal) => request<Track>(`/v1/tracks/${encodeURIComponent(id)}`, { signal }),
   createUpload: () => request<UploadTarget>("/v1/uploads", { method: "POST", body: {} }),

@@ -16,7 +16,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <Logo />
           <div className="space-y-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">Listen together</h1>
-            <p className="text-sm text-muted-foreground">Username and password. No email.</p>
+            <p className="text-sm text-muted-foreground">Username and password.</p>
           </div>
         </div>
         <LoginForm next={safeNext(typeof next === "string" ? next : null)} />
